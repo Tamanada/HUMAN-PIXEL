@@ -89,8 +89,11 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
   const [satellite, setSatellite] = useState(defaultSatellite && !!config.satelliteTiles);
-  const drawState = useRef<{ coords: [number, number][]; tracing?: boolean }>({ coords: [] });
-  const [freehand, setFreehand] = useState(false);
+  const drawState = useRef<{ coords: [number, number][]; tracing?: boolean; shaping?: boolean; closed?: boolean; start?: maplibregl.Point }>({ coords: [] });
+  // How a polygon is drawn: corner by corner, traced by hand, or dragged as a simple shape.
+  const [shape, setShape] = useState<ShapeMode>('corners');
+  const freehand = shape === 'freehand';
+  const dragShape = DRAG_SHAPES.includes(shape);
   // Corners placed so far (drives the Undo / Finish buttons) and the actions of the active tool.
   const [draftCount, setDraftCount] = useState(0);
   const [editDepth, setEditDepth] = useState(0);
@@ -283,6 +286,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
     draft.setData(EMPTY);
     const polygon = draw?.kind === 'polygon';
     const trace = polygon && freehand;
+    const drag = polygon && dragShape;
     m.getCanvas().style.cursor = draw ? 'crosshair' : '';
 
     const color = draw?.color ?? '#ffffff';
@@ -297,25 +301,27 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       const features: GeoJSON.Feature[] = [];
       const ring = cursor && !trace ? [...c, cursor] : c;
       if (ring.length >= 3) features.push(feat({ type: 'Polygon', coordinates: [[...ring, ring[0]!]] }, { role: 'fill' }));
-      if (c.length >= 2) features.push(feat({ type: 'LineString', coordinates: trace && !st.tracing ? [...c, c[0]!] : c }, { role: 'edge' }));
-      if (cursor && c.length >= 1 && !trace) {
+      if (c.length >= 2) features.push(feat({ type: 'LineString', coordinates: (trace && !st.tracing) || st.closed ? [...c, c[0]!] : c }, { role: 'edge' }));
+      if (cursor && c.length >= 1 && !trace && !drag) {
         features.push(feat({ type: 'LineString', coordinates: c.length >= 2 ? [c[c.length - 1]!, cursor, c[0]!] : [c[0]!, cursor] }, { role: 'rubber' }));
       }
       if (trace && st.tracing && c.length >= 3) features.push(feat({ type: 'LineString', coordinates: [c[c.length - 1]!, c[0]!] }, { role: 'rubber' }));
-      if (!trace) c.forEach((p, i) => features.push(feat({ type: 'Point', coordinates: p }, { role: 'vertex', first: i === 0 && c.length >= 3 })));
+      if (!trace && !drag) c.forEach((p, i) => features.push(feat({ type: 'Point', coordinates: p }, { role: 'vertex', first: i === 0 && c.length >= 3 })));
       draft.setData({ type: 'FeatureCollection', features });
       setDraftCount(c.length);
     };
     const reset = () => {
       st.coords = [];
       st.tracing = false;
+      st.shaping = false;
+      st.closed = false;
       draft.setData(EMPTY);
       setDraftCount(0);
     };
     const finish = () => {
       const d = cb.current.draw;
       let c = st.coords;
-      if (trace) c = simplifyOnScreen(m, c, 1.5);
+      if (trace && !st.closed) c = simplifyOnScreen(m, c, 1.5);
       c = dedupeOnScreen(m, c, 2);
       if (d?.kind === 'polygon' && c.length >= 3) d.onDone({ type: 'Polygon', coordinates: [[...c, c[0]!]] });
       reset();
@@ -339,7 +345,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       const d = cb.current.draw;
       if (d) {
         if (d.kind === 'point') return d.onDone({ type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] });
-        if (trace) return;
+        if (trace || drag) return;
         // The 2nd click of a double-click is the "finish" gesture, not a new corner.
         if (e.originalEvent.detail > 1) return;
         // Clicking the first corner again closes the shape.
@@ -358,15 +364,26 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
     const dbl = (e: maplibregl.MapMouseEvent) => {
       if (!cb.current.draw) return;
       e.preventDefault();
-      if (!trace) finish();
+      if (!trace && !drag) finish();
     };
     const down = (e: maplibregl.MapMouseEvent) => {
+      if (drag && e.originalEvent.button === 0) {
+        st.start = e.point;
+        st.shaping = true;
+        return;
+      }
       if (!trace || e.originalEvent.button !== 0) return;
       st.coords = [[e.lngLat.lng, e.lngLat.lat]];
       st.tracing = true;
       render();
     };
     const move = (e: maplibregl.MapMouseEvent) => {
+      if (st.shaping && st.start) {
+        st.coords = shapeRing(m, st.start, e.point, shape);
+        st.closed = true;
+        render();
+        return;
+      }
       if (!st.tracing) {
         if (!trace && cb.current.draw?.kind === 'polygon' && st.coords.length) render([e.lngLat.lng, e.lngLat.lat]);
         return;
@@ -376,7 +393,17 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       st.coords.push([e.lngLat.lng, e.lngLat.lat]);
       render();
     };
-    const up = () => {
+    const up = (e: maplibregl.MapMouseEvent) => {
+      if (st.shaping && st.start) {
+        const tooSmall = Math.hypot(e.point.x - st.start.x, e.point.y - st.start.y) < 6;
+        st.shaping = false;
+        if (tooSmall) reset();
+        else {
+          st.coords = shapeRing(m, st.start, e.point, shape);
+          finish();
+        }
+        return;
+      }
       if (!st.tracing) return;
       st.tracing = false;
       finish();
@@ -385,7 +412,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       if (!cb.current.draw) return;
       if (e.key === 'Enter') finish();
       if (e.key === 'Escape') reset();
-      if (e.key === 'Backspace' && !trace) {
+      if (e.key === 'Backspace' && !trace && !drag) {
         st.coords.pop();
         render();
       }
@@ -404,7 +431,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       m.off('mouseup', up);
       window.removeEventListener('keydown', key);
     };
-  }, [draw, ready, freehand]);
+  }, [draw, ready, shape]);
 
   // Reshape: drag a corner to move it, drag a small edge handle to add a corner there, double-click a
   // corner to remove it. Every change is undoable; nothing is saved until "Save shape".
@@ -523,7 +550,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
-    const trace = draw?.kind === 'polygon' && freehand;
+    const trace = draw?.kind === 'polygon' && (freehand || dragShape);
     const set = (h: { enable: () => void; disable: () => void }, on: boolean) => (on ? h.enable() : h.disable());
     set(m.dragPan, !locked && !trace);
     set(m.scrollZoom, !locked);
@@ -533,7 +560,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
     set(m.touchZoomRotate, !locked);
     set(m.doubleClickZoom, !locked && !draw && !edit);
     m.getContainer().classList.toggle('hp-map-locked', locked);
-  }, [locked, draw, edit, freehand, ready]);
+  }, [locked, draw, edit, shape, ready]);
 
   const rotateTo = (deg: number) => {
     const m = map.current;
@@ -580,21 +607,19 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
           {draw && (
             <div className="flex w-full flex-wrap items-center justify-center gap-2 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs backdrop-blur">
               {draw.kind === 'polygon' && (
-                <div className="flex gap-0.5 rounded-md bg-bg p-0.5">
-                  {([[false, 'Corners'], [true, 'Freehand']] as const).map(([f, label]) => (
-                    <button key={label} onClick={() => setFreehand(f)} className={`rounded px-2 py-1 ${freehand === f ? 'bg-surface-2 text-text' : 'text-muted'}`}>{label}</button>
+                <div className="flex flex-wrap gap-0.5 rounded-md bg-bg p-0.5">
+                  {SHAPE_MODES.map(([k, label]) => (
+                    <button key={k} onClick={() => setShape(k)} className={`rounded px-2 py-1 ${shape === k ? 'bg-surface-2 text-text' : 'text-muted'}`}>{label}</button>
                   ))}
                 </div>
               )}
               <span className="text-muted">
                 {draw.kind === 'point'
                   ? 'Click the map to place the point'
-                  : freehand
-                    ? 'Hold the left button and trace the outline; release to finish · right-drag rotates'
-                    : 'Click each corner · click the first corner or double-click to finish'}
+                  : SHAPE_HINT[shape]}
               </span>
               <div className="flex gap-1">
-                {draw.kind === 'polygon' && !freehand && (
+                {draw.kind === 'polygon' && shape === 'corners' && (
                   <>
                     <BarButton icon={<Undo2 size={13} />} disabled={draftCount === 0} onClick={() => actions.current.undo?.()} title="Remove the last corner (Backspace)">Undo</BarButton>
                     <BarButton icon={<Check size={13} />} disabled={draftCount < 3} onClick={() => actions.current.finish?.()} title="Close and save the shape (Enter)" primary>Finish</BarButton>
@@ -637,6 +662,56 @@ function pickArea(m: MlMap, pt: maplibregl.Point, selected: string | null | unde
   if (!ordered.length) return null;
   const i = selected ? ordered.indexOf(selected) : -1;
   return i >= 0 ? ordered[(i + 1) % ordered.length]! : ordered[0]!;
+}
+
+type ShapeMode = 'corners' | 'freehand' | 'rect' | 'square' | 'circle' | 'oval';
+const DRAG_SHAPES: ShapeMode[] = ['rect', 'square', 'circle', 'oval'];
+const SHAPE_MODES: [ShapeMode, string][] = [
+  ['corners', 'Corners'],
+  ['freehand', 'Freehand'],
+  ['rect', 'Rectangle'],
+  ['square', 'Square'],
+  ['circle', 'Circle'],
+  ['oval', 'Oval'],
+];
+const SHAPE_HINT: Record<ShapeMode, string> = {
+  corners: 'Click each corner · click the first corner or double-click to finish',
+  freehand: 'Hold the left button and trace the outline; release to finish · right-drag rotates',
+  rect: 'Drag from one corner to the opposite corner (aligned with your map view)',
+  square: 'Drag from one corner; the square follows the mouse',
+  circle: 'Drag from the centre outwards; release at the radius you want',
+  oval: 'Drag across the box that holds the oval (aligned with your map view)',
+};
+
+/**
+ * A simple shape between the press point `a` and the current point `b`, built in SCREEN space so
+ * it follows the map view (rotate the map to the beach first and the rectangle lines up with it),
+ * then converted to coordinates. Round shapes get 48 corners: smooth, still easy to reshape.
+ */
+function shapeRing(m: MlMap, a: maplibregl.Point, b: maplibregl.Point, shape: ShapeMode): [number, number][] {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let pts: [number, number][];
+  if (shape === 'rect' || shape === 'square') {
+    const e = shape === 'square' ? Math.max(Math.abs(dx), Math.abs(dy)) : 0;
+    const bx = shape === 'square' ? a.x + Math.sign(dx || 1) * e : b.x;
+    const by = shape === 'square' ? a.y + Math.sign(dy || 1) * e : b.y;
+    pts = [[a.x, a.y], [bx, a.y], [bx, by], [a.x, by]];
+  } else {
+    const circle = shape === 'circle';
+    const cx = circle ? a.x : (a.x + b.x) / 2;
+    const cy = circle ? a.y : (a.y + b.y) / 2;
+    const rx = circle ? Math.hypot(dx, dy) : Math.abs(dx) / 2;
+    const ry = circle ? rx : Math.abs(dy) / 2;
+    pts = Array.from({ length: 48 }, (_, i) => {
+      const t = (i / 48) * Math.PI * 2;
+      return [cx + rx * Math.cos(t), cy + ry * Math.sin(t)] as [number, number];
+    });
+  }
+  return pts.map(([x, y]) => {
+    const ll = m.unproject([x, y]);
+    return [ll.lng, ll.lat];
+  });
 }
 
 function BarButton({ icon, children, onClick, disabled, title, primary }: { icon: ReactNode; children: ReactNode; onClick: () => void; disabled?: boolean; title?: string; primary?: boolean }) {
