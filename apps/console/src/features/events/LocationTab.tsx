@@ -244,17 +244,27 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
         </Field>
         {area.kind === 'access_point' && canEdit && (
           <div className="flex flex-wrap gap-1.5">
-            {/* Plain text pills (the organizer's chosen layout); colour and pictogram appear on the map. */}
-            {POINT_SYMBOLS.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => (setName(p.label), setSymbol(p.id))}
-                className={`rounded-full border px-2.5 py-1 text-xs ${symbol === p.id ? 'border-pixel bg-pixel/10 text-pixel' : 'border-line text-muted hover:border-muted hover:text-text'}`}
-              >
-                {p.label}
-              </button>
-            ))}
+            {/* The organizer's layout (same pills, order, size), each in its ISO safety colour with its
+                pictogram; the chosen one is filled. */}
+            {POINT_SYMBOLS.map((p) => {
+              const Icon = p.icon;
+              const on = symbol === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  title={p.norm}
+                  onClick={() => (setName(p.label), setSymbol(p.id))}
+                  className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-text"
+                  style={on ? { background: p.color, borderColor: p.color, color: p.ink } : { borderColor: p.color }}
+                >
+                  <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ background: on ? 'transparent' : p.color }}>
+                    <Icon size={11} strokeWidth={2.8} color={p.ink} />
+                  </span>
+                  {p.label}
+                </button>
+              );
+            })}
           </div>
         )}
         {bufferMatters && (
