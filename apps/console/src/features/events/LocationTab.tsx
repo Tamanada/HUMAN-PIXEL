@@ -105,7 +105,9 @@ export function LocationTab({ event, canEdit }: TabProps) {
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-      <div className="space-y-3">
+      {/* The map stays in view (sticky) while the tools on the right scroll. */}
+      <div className="space-y-3 xl:sticky xl:top-4 xl:self-start">
+        <div className="h-[620px] xl:h-[calc(100vh-2rem)]">
         <MapView
           areas={(areas.data ?? []).filter((a) => a.id !== editingId)}
           edit={edit}
@@ -114,13 +116,13 @@ export function LocationTab({ event, canEdit }: TabProps) {
           selectedAreaId={selected}
           onAreaClick={setSelected}
           onMapClick={onMapClick}
-          height={620}
+          height="100%"
           defaultSatellite
           message={error ? (error as Error).message.replace(/^INVALID_GEOMETRY: /, '').replace(/^\w/, (c) => c.toUpperCase()) : null}
           bearingKey={event.id}
         />
+        </div>
         {placingCenter && <Alert>Click the map to set the event center (used as the default formation anchor).</Alert>}
-        {error && <Alert tone="bad">{(error as Error).message}</Alert>}
       </div>
       <div className="space-y-4">
         <SurfaceCard areas={areas.data ?? []} eventId={event.id} />
