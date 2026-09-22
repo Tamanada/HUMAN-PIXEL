@@ -40,15 +40,17 @@ interface Props {
   selectedAreaId?: string | null;
   onAreaClick?: (id: string) => void;
   onMapClick?: (lngLat: { lat: number; lng: number }) => void;
+  /** Start on satellite imagery (drawing the ground needs to see it). */
+  defaultSatellite?: boolean;
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-export function MapView({ areas = [], points, center, draw, height = 520, selectedAreaId, onAreaClick, onMapClick }: Props) {
+export function MapView({ areas = [], points, center, draw, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
-  const [satellite, setSatellite] = useState(false);
+  const [satellite, setSatellite] = useState(defaultSatellite && !!config.satelliteTiles);
   const drawState = useRef<{ coords: [number, number][] }>({ coords: [] });
   const fitted = useRef(false);
 
@@ -61,12 +63,17 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       center: center ? [center.lng, center.lat] : [100.0402, 9.6664],
       zoom: center ? 16 : 3,
       attributionControl: { compact: true },
+      maxZoom: 22,
     });
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
-    m.on('load', () => {
+    // 'style.load', not 'load': 'load' also waits for every background tile, and a slow or stuck
+    // tile server would leave the map without our layers (no areas, no drawing).
+    m.once('style.load', () => {
       if (config.satelliteTiles) {
-        m.addSource('sat', { type: 'raster', tiles: [config.satelliteTiles], tileSize: 256, attribution: config.satelliteAttribution });
+        // Beyond the provider's last real zoom, its tiles are upscaled (not replaced by "no data" placeholders),
+        // so corners can still be placed to the metre.
+        m.addSource('sat', { type: 'raster', tiles: [config.satelliteTiles], tileSize: 256, maxzoom: config.satelliteMaxZoom, attribution: config.satelliteAttribution });
         m.addLayer({ id: 'sat', type: 'raster', source: 'sat', layout: { visibility: 'none' } });
       }
       m.addSource('areas', { type: 'geojson', data: EMPTY });
@@ -96,6 +103,7 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       setReady(true);
     });
     map.current = m;
+    if (import.meta.env.DEV) (window as unknown as { __hpMap?: MlMap }).__hpMap = m;
     return () => {
       m.remove();
       map.current = null;
@@ -232,7 +240,9 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-line" style={{ height }}>
-      <div ref={el} className="absolute inset-0" />
+      {/* Inline, not a class: maplibre-gl.css (unlayered) sets .maplibregl-map { position: relative },
+          which beats Tailwind's layered utilities and would collapse the map to 0 px height. */}
+      <div ref={el} style={{ position: 'absolute', inset: 0 }} />
       {config.satelliteTiles && (
         <button
           onClick={() => setSatellite((s) => !s)}

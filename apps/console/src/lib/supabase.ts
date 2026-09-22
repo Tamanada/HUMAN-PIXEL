@@ -13,6 +13,8 @@ export const config = {
   mapStyleUrl: (env.VITE_MAP_STYLE_URL as string | undefined) || 'https://tiles.openfreemap.org/styles/liberty',
   satelliteTiles: (env.VITE_SATELLITE_TILES as string | undefined) || null,
   satelliteAttribution: (env.VITE_SATELLITE_ATTRIBUTION as string | undefined) || '',
+  /** Last zoom with real imagery (Esri World Imagery: 18 on Koh Phangan; 19 is a "no data" placeholder). */
+  satelliteMaxZoom: Number(env.VITE_SATELLITE_MAXZOOM) || 18,
   sentryDsn: (env.VITE_SENTRY_DSN as string | undefined) || null,
   appVersion: (env.VITE_APP_VERSION as string | undefined) || '1.0.0',
 };
