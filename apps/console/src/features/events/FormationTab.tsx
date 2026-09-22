@@ -475,6 +475,12 @@ function ResultPanel({ result }: { result: FormationResult }) {
         <Stat label="Clipped" value={`${(m.clippedFraction * 100).toFixed(1)}%`} sub="by safety areas" />
         <Stat label="Engine" value={`${(m.generationMs / 1000).toFixed(1)} s`} sub={`${m.lloydIterations} relax passes`} />
       </div>
+      <p className="mt-4 text-xs text-muted">
+        Readability rates the aerial photo, not this preview (which shows every pixel, i.e. a perfect turnout).
+        It weighs stroke thickness ({m.strokePersonsP20.toFixed(1)} people, 60 %), spacing ({m.nnMeanM.toFixed(2)} m, 25 %)
+        and how much of the design was clipped ({(m.clippedFraction * 100).toFixed(1)} %, 15 %). Thin strokes lose the
+        most: at {m.strokePersonsP20.toFixed(1)} people wide, missing participants open gaps in the letters.
+      </p>
       {result.warnings.length > 0 && (
         <div className="mt-4 space-y-2">
           {result.warnings.map((w) => <Alert key={w.code} tone="warn">{w.message}</Alert>)}

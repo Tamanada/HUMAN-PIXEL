@@ -744,8 +744,10 @@ function strokeWidths(f: Field): { median: number; p20: number } {
 }
 
 function readabilityScore(strokePersons: number, spacing: number, clipped: number): number {
-  // Strokes ≥ 4 people wide read clearly from the air; below 2 they break apart.
-  const stroke = Math.max(0, Math.min(1, (strokePersons - 1.5) / 2.5));
+  // How the photo survives from the air. Strokes ≥ 3.5 people wide read cleanly and keep reading
+  // when people are missing; at 1 person wide a single no-show cuts the line. (The preview always
+  // looks perfect: it draws every pixel, i.e. a 100 % turnout.)
+  const stroke = Math.max(0, Math.min(1, (strokePersons - 1) / 2.5));
   // Beyond ~3 m spacing the "ink" looks faint on photos.
   const density = spacing <= 2 ? 1 : Math.max(0, 1 - (spacing - 2) / 3);
   const integrity = Math.max(0, 1 - clipped * 3);
