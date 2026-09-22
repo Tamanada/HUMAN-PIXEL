@@ -9,7 +9,7 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&ur
 import { Check, Layers, Lock, LockOpen, RotateCcw, RotateCw, Undo2, X } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { config } from '../lib/supabase';
-import { loadSymbolImages, SYMBOL_DRAG_TYPE, type PointSymbol } from '../lib/symbols';
+import { loadSymbolImages, SYMBOL_DRAG_TYPE, KIND_DRAG_TYPE, type PointSymbol } from '../lib/symbols';
 import type { AreaRow } from '../lib/types';
 
 export const AREA_STYLE: Record<AreaRow['kind'], { color: string; label: string; fill: number }> = {
@@ -21,6 +21,9 @@ export const AREA_STYLE: Record<AreaRow['kind'], { color: string; label: string;
   access_point: { color: '#2be38f', label: 'Access point', fill: 0 },
   assembly: { color: '#2be38f', label: 'Assembly area', fill: 0.12 },
   entry_zone: { color: '#9ad0ff', label: 'Entry zone', fill: 0.12 },
+  collection: { color: '#2be38f', label: 'Collection point', fill: 0 },
+  control: { color: '#ffd23f', label: 'Control point', fill: 0 },
+  bounty: { color: '#ff8a3d', label: 'Bounty point', fill: 0 },
 };
 
 export type DrawMode = { kind: 'polygon' | 'point'; color?: string; onDone: (geom: GeoJSON.Polygon | GeoJSON.Point) => void; onCancel?: () => void } | null;
@@ -57,6 +60,8 @@ interface Props {
   bearingKey?: string;
   /** A symbol pill was dropped on the map at this position. */
   onDropSymbol?: (symbolId: string, at: { lat: number; lng: number }) => void;
+  /** A point kind (collection / control / bounty) was dropped on the map. */
+  onDropKind?: (kind: AreaRow['kind'], at: { lat: number; lng: number }) => void;
   /** A point (access point) was dragged to a new position. Omitted ⇒ points cannot be moved. */
   onMovePoint?: (areaId: string, to: { lat: number; lng: number }) => void;
   /** The event's custom point types, drawn with their colour and logo. */
@@ -92,7 +97,7 @@ function writeBearing(key: string | undefined, deg: number) {
 }
 const norm180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 
-export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, focus = null, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange, onDropSymbol, onMovePoint, customSymbols }: Props) {
+export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, focus = null, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange, onDropSymbol, onDropKind, onMovePoint, customSymbols }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
@@ -684,7 +689,8 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       className={`relative overflow-hidden rounded-2xl border ${dropping ? 'border-pixel' : 'border-line'}`}
       style={{ height }}
       onDragOver={(e) => {
-        if (!onDropSymbol || !e.dataTransfer.types.includes(SYMBOL_DRAG_TYPE)) return;
+        const ok = (onDropSymbol && e.dataTransfer.types.includes(SYMBOL_DRAG_TYPE)) || (onDropKind && e.dataTransfer.types.includes(KIND_DRAG_TYPE));
+        if (!ok) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         if (!dropping) setDropping(true);
@@ -695,12 +701,14 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       onDrop={(e) => {
         setDropping(false);
         const id = e.dataTransfer.getData(SYMBOL_DRAG_TYPE);
+        const kind = e.dataTransfer.getData(KIND_DRAG_TYPE) as AreaRow['kind'] | '';
         const mm = map.current;
-        if (!id || !mm || !onDropSymbol) return;
+        if ((!id && !kind) || !mm) return;
         e.preventDefault();
         const rect = mm.getCanvas().getBoundingClientRect();
         const ll = mm.unproject([e.clientX - rect.left, e.clientY - rect.top]);
-        onDropSymbol(id, { lat: ll.lat, lng: ll.lng });
+        if (id && onDropSymbol) onDropSymbol(id, { lat: ll.lat, lng: ll.lng });
+        else if (kind && onDropKind) onDropKind(kind, { lat: ll.lat, lng: ll.lng });
       }}
     >
       {/* Inline, not a class: maplibre-gl.css (unlayered) sets .maplibregl-map { position: relative },

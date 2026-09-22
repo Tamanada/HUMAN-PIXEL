@@ -144,6 +144,8 @@ export async function loadSymbolImages(add: (id: string, img: HTMLImageElement) 
 
 /** MIME type used when a symbol pill is dragged onto the map. */
 export const SYMBOL_DRAG_TYPE = 'application/x-hp-symbol';
+/** MIME type used when a point KIND (collection / control / bounty) is dragged onto the map. */
+export const KIND_DRAG_TYPE = 'application/x-hp-kind';
 
 /**
  * The access-point pill: outline and logo in the symbol's safety colour, filled when selected.

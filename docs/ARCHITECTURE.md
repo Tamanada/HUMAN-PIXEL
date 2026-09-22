@@ -100,8 +100,11 @@ Core tables (see `supabase/migrations`):
 - `events`: timing (`starts_at`, `arrival_deadline`, `positions_release_at`), tolerance
   (`tolerance_radius_m`, `required_accuracy_m`), countdown config, share config, `state`,
   `active_formation_id`, `manifest_version`.
-- `event_areas` (= boundaries): `perimeter | formation_area | exclusion | no_go | emergency |
-  access_point | assembly | entry_zone`, PostGIS geometry, `safety_buffer_m`, `is_public`.
+- `event_areas` (= boundaries and points): `perimeter | formation_area | exclusion | no_go |
+  emergency | access_point | assembly | entry_zone | collection | control | bounty`, PostGIS
+  geometry, `safety_buffer_m`, `is_public`, `symbol` (ISO pictogram or an organizer-made type in
+  `event_symbols`), and for service points `capacity`, `opens_at`, `closes_at`, `details`.
+- `events.briefing` (jsonb) and `event_members.pickup_area_id`: see §8b.
 - `formations` (versioned per event), `formation_assets`, `formation_zones`,
   `formation_points` (≤ 100k rows per formation; `member_id UNIQUE` = the assignment).
 - `event_groups`, `event_members` (participants; `participant_number` sequential per event).
@@ -181,6 +184,25 @@ smoothing absorb GPS jitter so the state doesn't flicker.
 
 Outbox: persisted, coalesces to the latest state, monotonic `seq`, min 5 s spacing, backoff with full
 jitter, quiet window around T-0 (T-30 s → T+150 s, spread over 5 min). The server ignores `seq ≤ last_seq` (idempotent, replay-safe, multi-device safe).
+
+## 8b. Briefing and pickup points (sponsored events)
+
+Participants must know what to wear and what they get; sponsors hand out thousands of items
+without a stampede.
+
+- `events.briefing` (jsonb): dress code (text + colour swatches), what to bring, what to collect,
+  the bounty after the photo. Returned by `get_event_preview` (shown **before** joining, so people
+  arrive dressed correctly) and inside the assignment bundle. A change bumps `manifest_version`,
+  so phones re-read it.
+- Pickup points are event areas of kind `collection`, `control` or `bounty` (points, like access
+  points) with `capacity`, `opens_at`, `closes_at` and `details` (what is handed out).
+- **One collection point per participant.** `hp_assign_pickup` runs inside `join_event` and picks
+  the least loaded point that still has room (ratio to capacity, random tie-break), so queues and
+  stock split evenly. `rebalance_pickups` re-deals everybody round-robin when a point is added or
+  removed and bumps `assignment_epoch` so phones learn their new point;
+  `set_member_pickup` moves one person by hand.
+- The phone shows the briefing and its own point (name, what to collect, opening hours, "Open in
+  maps"). The console shows the load per point with a "Spread evenly" action.
 
 ## 9. Media
 

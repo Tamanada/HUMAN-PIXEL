@@ -9,7 +9,7 @@ import type { TabProps } from './EventLayout';
 type Draft = Pick<
   EventRow,
   | 'name' | 'venue_name' | 'timezone' | 'capacity' | 'tolerance_radius_m' | 'required_accuracy_m' | 'allocation_mode'
-  | 'allow_late_registration' | 'allow_anonymous_join' | 'countdown' | 'share_message' | 'hashtags' | 'photo_audience' | 'retention_days'
+  | 'allow_late_registration' | 'allow_anonymous_join' | 'countdown' | 'share_message' | 'hashtags' | 'photo_audience' | 'retention_days' | 'briefing'
 > & { starts_local: string; arrival_local: string; release_local: string };
 
 export function SettingsTab({ event, canEdit }: TabProps) {
@@ -30,6 +30,7 @@ export function SettingsTab({ event, canEdit }: TabProps) {
     hashtags: event.hashtags,
     photo_audience: event.photo_audience,
     retention_days: event.retention_days,
+    briefing: event.briefing ?? {},
     starts_local: isoToZonedLocal(event.starts_at, tz0),
     arrival_local: isoToZonedLocal(event.arrival_deadline, tz0),
     release_local: isoToZonedLocal(event.positions_release_at, tz0),
@@ -54,6 +55,7 @@ export function SettingsTab({ event, canEdit }: TabProps) {
         hashtags: d.hashtags.map((h) => h.replace(/^#/, '').trim()).filter(Boolean).slice(0, 10),
         photo_audience: d.photo_audience,
         retention_days: d.retention_days,
+        briefing: d.briefing,
         starts_at: d.starts_local ? zonedLocalToIso(d.starts_local, d.timezone) : null,
         arrival_deadline: d.arrival_local ? zonedLocalToIso(d.arrival_local, d.timezone) : null,
         positions_release_at: d.release_local ? zonedLocalToIso(d.release_local, d.timezone) : null,
@@ -111,6 +113,49 @@ export function SettingsTab({ event, canEdit }: TabProps) {
         <div className="mt-4 space-y-1 border-t border-line pt-3">
           <Toggle checked={d.allow_late_registration} onChange={(v) => set('allow_late_registration', v)} label="Late registration during preparation and on site" />
           <Toggle checked={d.allow_anonymous_join} onChange={(v) => set('allow_anonymous_join', v)} label="Instant join without email (faster gates, weaker anti-abuse)" />
+        </div>
+      </Card>
+      {/* What participants are told: shown before joining and on their phone. */}
+      <Card title="Participant briefing">
+        <div className="space-y-3">
+          <Field label="What to wear" hint="Shown before someone joins, so they come dressed right.">
+            <Input
+              disabled={frozen}
+              maxLength={200}
+              placeholder="e.g. Plain white t-shirt, no logos"
+              value={d.briefing.dressCode?.text ?? ''}
+              onChange={(e) => set('briefing', { ...d.briefing, dressCode: { ...d.briefing.dressCode, text: e.target.value } })}
+            />
+          </Field>
+          <Field label="Colours" hint="The swatches participants see. Click a swatch to remove it.">
+            <div className="flex flex-wrap items-center gap-2">
+              {(d.briefing.dressCode?.colors ?? []).map((c, i) => (
+                <button
+                  key={`${c}-${i}`}
+                  type="button"
+                  disabled={frozen}
+                  title="Remove this colour"
+                  onClick={() => set('briefing', { ...d.briefing, dressCode: { ...d.briefing.dressCode, colors: (d.briefing.dressCode?.colors ?? []).filter((_, j) => j !== i) } })}
+                  className="h-7 w-7 rounded-full border border-line"
+                  style={{ background: c }}
+                />
+              ))}
+              <label className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-line px-2 text-xs text-muted hover:text-text">
+                <input
+                  type="color"
+                  disabled={frozen}
+                  className="h-4 w-4 cursor-pointer border-0 bg-transparent p-0"
+                  onChange={(e) => set('briefing', { ...d.briefing, dressCode: { ...d.briefing.dressCode, colors: [...(d.briefing.dressCode?.colors ?? []), e.target.value] } })}
+                />
+                Add colour
+              </label>
+            </div>
+          </Field>
+          <Field label="What to bring"><Input disabled={frozen} maxLength={200} placeholder="e.g. Water, sunscreen, your phone charged" value={d.briefing.bring ?? ''} onChange={(e) => set('briefing', { ...d.briefing, bring: e.target.value })} /></Field>
+          <Field label="What to collect" hint="Each participant is sent to one collection point (Location & safety).">
+            <Input disabled={frozen} maxLength={200} placeholder="e.g. Sponsor t-shirt and wristband" value={d.briefing.collect ?? ''} onChange={(e) => set('briefing', { ...d.briefing, collect: e.target.value })} />
+          </Field>
+          <Field label="Bounty after the event"><Input disabled={frozen} maxLength={200} placeholder="e.g. Free drink at the bounty point with your wristband" value={d.briefing.bounty ?? ''} onChange={(e) => set('briefing', { ...d.briefing, bounty: e.target.value })} /></Field>
         </div>
       </Card>
       <Card title="Countdown on phones">

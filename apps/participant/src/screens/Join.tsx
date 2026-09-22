@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Banner, Button, Eyebrow, Field, PixelMark, Screen, inputClass } from '../components/ui';
 import { ApiError, getEventPreview, getMyProfile, joinEvent, type EventPreview, type Profile } from '../lib/api';
+import { BriefingCard } from '../components/Briefing';
 import { ProfileForm } from '../components/ProfileForm';
 import { flagEmoji } from '@human-pixel/core';
 import { formatEventDate, formatEventTime, useOnline, useSession } from '../lib/hooks';
@@ -164,6 +165,8 @@ export function Join() {
                 <p className="text-lg">
                   Thousands of people. One secret image. You will receive one exact spot, and only the sky will see what you create together.
                 </p>
+                {/* What the organizer asks: seen BEFORE joining, so people come dressed right. */}
+                {preview && <BriefingCard briefing={preview.briefing} />}
                 {error && <Banner tone="bad">{error}</Banner>}
                 <Button onClick={next} disabled={!preview?.registrationOpen}>
                   {preview?.registrationOpen ? 'Become a pixel' : 'Registration closed'}

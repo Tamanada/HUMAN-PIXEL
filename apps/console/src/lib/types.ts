@@ -16,6 +16,7 @@ export interface EventRow {
   positions_release_at: string | null;
   /** Registration limit. NULL until the formation (or a manual target) decides it. */
   capacity: number | null;
+  briefing: Briefing;
   tolerance_radius_m: number;
   required_accuracy_m: number;
   allocation_mode: 'progressive' | 'random' | 'sequential';
@@ -38,7 +39,7 @@ export interface EventRow {
 export interface AreaRow {
   id: string;
   event_id: string;
-  kind: 'perimeter' | 'formation_area' | 'exclusion' | 'no_go' | 'emergency' | 'access_point' | 'assembly' | 'entry_zone';
+  kind: 'perimeter' | 'formation_area' | 'exclusion' | 'no_go' | 'emergency' | 'access_point' | 'assembly' | 'entry_zone' | 'collection' | 'control' | 'bounty';
   name: string | null;
   /** Access-point symbol (see lib/symbols): medical, exit, toilets… */
   symbol?: string | null;
@@ -46,6 +47,21 @@ export interface AreaRow {
   safety_buffer_m: number;
   is_public: boolean;
   area_m2?: number | null;
+  /** Pickup points: how many people it can serve, when it is open, what it hands out. */
+  capacity?: number | null;
+  opens_at?: string | null;
+  closes_at?: string | null;
+  details?: string | null;
+  /** Participants currently sent to this collection point. */
+  assigned?: number;
+}
+
+/** What participants are told before and during the event (events.briefing). */
+export interface Briefing {
+  dressCode?: { text?: string; colors?: string[] };
+  bring?: string;
+  collect?: string;
+  bounty?: string;
 }
 
 export interface FormationRow {

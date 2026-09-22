@@ -6,6 +6,7 @@ import type { EngineSnapshot, ParticipantEngine } from '../engine/ParticipantEng
 import { Banner, Button, Eyebrow, PixelMark, Screen, StatusPill } from '../components/ui';
 import { DirectionArrow, Radar } from '../components/Radar';
 import { ListingToggle } from '../components/ListingToggle';
+import { BriefingCard, PickupCard } from '../components/Briefing';
 import { CountdownClock, FinalCountdown, primeAudio } from '../components/Countdown';
 import { formatClock, formatEventDate, formatEventTime, useSunlight } from '../lib/hooks';
 import { openExternalDirections, requestCompass, requestGeolocation } from '../lib/platform';
@@ -124,6 +125,9 @@ function PhaseView({ engine, snap, now }: { engine: ParticipantEngine; snap: Eng
       ) : (
         <Navigation engine={engine} snap={snap} now={now} />
       )}
+      {/* What to wear / bring, and the personal pickup point: useful until the formation starts. */}
+      {!snap.tracker?.inPosition && <BriefingCard briefing={b.event.briefing} />}
+      {!snap.tracker?.inPosition && b.pickup && <PickupCard pickup={b.pickup} timezone={tz} />}
       {snap.startsAt != null && !snap.tracker?.inPosition && <CountdownClock startsAt={snap.startsAt} now={now} />}
       {!snap.tracker?.inPosition && <ListingToggle eventId={b.event.id} />}
       <p className="text-center text-xs text-muted">

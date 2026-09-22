@@ -5,7 +5,8 @@ import { countryName, flagEmoji } from '@human-pixel/core';
 import { Alert, Badge, Button, Card, Empty, Field, Input, Modal, Select, Spinner, Table } from '../../components/ui';
 import { must, rpc, supabase } from '../../lib/supabase';
 import { fmtRelative } from '../../lib/time';
-import type { MemberRow } from '../../lib/types';
+import type { AreaRow, MemberRow } from '../../lib/types';
+import { useAreas } from './hooks';
 import type { TabProps } from './EventLayout';
 import { useCounters } from './hooks';
 
@@ -115,6 +116,7 @@ export function ParticipantsTab({ event, canEdit }: TabProps) {
           )}
         </Card>
         <div className="space-y-6">
+          <PickupPoints eventId={event.id} canEdit={canEdit} />
           <Demographics eventId={event.id} />
           <Groups eventId={event.id} canEdit={canEdit} groups={groups.data ?? []} hasFormation={!!event.active_formation_id} />
         </div>
@@ -176,6 +178,51 @@ function Groups({ eventId, canEdit, groups, hasFormation }: { eventId: string; c
         {reserve.data != null && <div className="mt-3"><Alert tone="ok">{reserve.data} pixels reserved.</Alert></div>}
         {reserve.error && <div className="mt-3"><Alert tone="bad">{(reserve.error as Error).message}</Alert></div>}
       </Modal>
+    </Card>
+  );
+}
+
+/** Collection points and how the crowd is split between them (t-shirts, drinks, wristbands…). */
+function PickupPoints({ eventId, canEdit }: { eventId: string; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const areas = useAreas(eventId);
+  const points = (areas.data ?? []).filter((a: AreaRow) => a.kind === 'collection');
+  const rebalance = useMutation({
+    mutationFn: () => rpc<{ points: number; moved: number }>('rebalance_pickups', { p_event_id: eventId }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['areas', eventId] });
+      void qc.invalidateQueries({ queryKey: ['members', eventId] });
+    },
+  });
+  if (points.length === 0) return null;
+  const total = points.reduce((n, p) => n + (p.assigned ?? 0), 0);
+  return (
+    <Card
+      title={`Collection points · ${total.toLocaleString()} people`}
+      actions={canEdit && <Button size="sm" variant="ghost" busy={rebalance.isPending} onClick={() => rebalance.mutate()}>Spread evenly</Button>}
+    >
+      <ul className="space-y-2 text-sm">
+        {points.map((p) => {
+          const n = p.assigned ?? 0;
+          const share = p.capacity ? Math.min(1, n / p.capacity) : total ? n / total : 0;
+          return (
+            <li key={p.id}>
+              <div className="flex justify-between">
+                <span>{p.name || 'Collection point'}</span>
+                <span className="hp-digits text-muted">{n.toLocaleString()}{p.capacity ? ` / ${p.capacity.toLocaleString()}` : ''}</span>
+              </div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+                <div className="h-full bg-ok" style={{ width: `${Math.round(share * 100)}%` }} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-3 text-xs text-muted">
+        Each participant is sent to one point when they join. Add points in Location &amp; safety, then "Spread evenly" to share the crowd again.
+      </p>
+      {rebalance.data && <p className="mt-2 text-xs text-ok">{rebalance.data.moved.toLocaleString()} participants moved across {rebalance.data.points} points.</p>}
+      {rebalance.error && <div className="mt-2"><Alert tone="bad">{(rebalance.error as Error).message}</Alert></div>}
     </Card>
   );
 }

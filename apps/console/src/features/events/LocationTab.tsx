@@ -6,14 +6,22 @@ import { surfaceCapacity } from '@human-pixel/core';
 import { Alert, Badge, Button, Card, Field, Input, Modal, Toggle } from '../../components/ui';
 import { AREA_STYLE, MapView, type DrawMode, type EditMode } from '../../components/MapView';
 import { rpc, supabase } from '../../lib/supabase';
+import { isoToZonedLocal, zonedLocalToIso } from '../../lib/time';
 import type { AreaRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
 import { constraintsFromAreas } from './formationClient';
 import { useAreas, useEventSymbols } from './hooks';
-import { POINT_SYMBOLS, SAFETY, SymbolPill, customSymbol, imageToPngDataUrl, symbolOf, type PointSymbol } from '../../lib/symbols';
+import { KIND_DRAG_TYPE, POINT_SYMBOLS, SAFETY, SymbolPill, customSymbol, imageToPngDataUrl, symbolOf, type PointSymbol } from '../../lib/symbols';
 
 /** A point dropped on the map but not saved yet (position and type can still change). */
 const PENDING_ID = '__pending__';
+
+/** Points that serve people: t-shirt tents, ticket checks, post-event bounty. */
+const PICKUP_KINDS: { kind: AreaRow['kind']; help: string }[] = [
+  { kind: 'collection', help: 'Hands out t-shirts, wristbands, drinks… Each participant is sent to ONE of them, the least loaded.' },
+  { kind: 'control', help: 'Where staff check people in or scan tickets.' },
+  { kind: 'bounty', help: 'Where participants claim their reward after the photo.' },
+];
 
 const TOOLS: { kind: AreaRow['kind']; shape: 'polygon' | 'point'; help: string }[] = [
   { kind: 'perimeter', shape: 'polygon', help: 'The whole event ground. Required. Every pixel must be inside.' },
@@ -36,7 +44,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
   // Just created: its editor opens at the top with the name field focused.
   const [justCreated, setJustCreated] = useState<string | null>(null);
   const [placingCenter, setPlacingCenter] = useState(false);
-  const [pending, setPending] = useState<{ symbol: string; lat: number; lng: number } | null>(null);
+  const [pending, setPending] = useState<{ symbol?: string; kind?: AreaRow['kind']; lat: number; lng: number } | null>(null);
   const [typeModal, setTypeModal] = useState(false);
   const symbolsQ = useEventSymbols(event.id);
   const customs = useMemo(() => (symbolsQ.data ?? []).map(customSymbol), [symbolsQ.data]);
@@ -48,7 +56,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
     void qc.invalidateQueries({ queryKey: ['areas', event.id] });
   };
   const save = useMutation({
-    mutationFn: (a: { kind: AreaRow['kind']; geom: GeoJSON.Geometry; name?: string | null; buffer?: number; isPublic?: boolean | null; id?: string | null; symbol?: string | null }) =>
+    mutationFn: (a: { kind: AreaRow['kind']; geom: GeoJSON.Geometry; name?: string | null; buffer?: number; isPublic?: boolean | null; id?: string | null; symbol?: string | null; capacity?: number | null; opensAt?: string | null; closesAt?: string | null; details?: string | null }) =>
       rpc<string>('save_event_area', {
         p_event_id: event.id,
         p_kind: a.kind,
@@ -58,6 +66,10 @@ export function LocationTab({ event, canEdit }: TabProps) {
         p_is_public: a.isPublic ?? null,
         p_area_id: a.id ?? null,
         p_symbol: a.symbol ?? null,
+        p_capacity: a.capacity ?? null,
+        p_opens_at: a.opensAt ?? null,
+        p_closes_at: a.closesAt ?? null,
+        p_details: a.details ?? null,
       }),
     onSuccess: (id, vars) => {
       setSelected(id);
@@ -120,9 +132,9 @@ export function LocationTab({ event, canEdit }: TabProps) {
     ? {
         id: PENDING_ID,
         event_id: event.id,
-        kind: 'access_point',
-        name: symbolOf(pending.symbol, allSymbols)?.label ?? null,
-        symbol: pending.symbol,
+        kind: pending.kind ?? 'access_point',
+        name: pending.kind ? AREA_STYLE[pending.kind].label : symbolOf(pending.symbol, allSymbols)?.label ?? null,
+        symbol: pending.symbol ?? null,
         geom: { type: 'Point', coordinates: [pending.lng, pending.lat] },
         safety_buffer_m: 0,
         is_public: true,
@@ -159,6 +171,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
                 }
               : undefined
           }
+          onDropKind={canEdit ? (kind, at) => (setTool(null), setEditingId(null), setSelected(null), setPending({ kind, lat: at.lat, lng: at.lng })) : undefined}
           onMovePoint={
             canEdit
               ? (id, to) => {
@@ -175,7 +188,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
       <div className="space-y-4">
         {pending && pendingArea && (
           <AreaEditor
-            key={`pending-${pending.symbol}`}
+            key={`pending-${pending.symbol ?? pending.kind}`}
             area={pendingArea}
             isNew
             symbols={allSymbols}
@@ -185,10 +198,11 @@ export function LocationTab({ event, canEdit }: TabProps) {
             autoFocusName={false}
             onClose={() => setPending(null)}
             onEditShape={() => {}}
-            onSymbolChange={(id) => setPending((p) => p && { ...p, symbol: id })}
+            onSymbolChange={(id) => setPending((p) => p && { ...p, symbol: id, kind: undefined })}
+            timezone={event.timezone}
             onSave={(p) =>
               save.mutate(
-                { kind: 'access_point', geom: pendingArea.geom, name: p.name, isPublic: p.isPublic, symbol: p.symbol },
+                { kind: pendingArea.kind, geom: pendingArea.geom, name: p.name, isPublic: p.isPublic, symbol: p.symbol, capacity: p.capacity, opensAt: p.opensAt, closesAt: p.closesAt, details: p.details },
                 { onSuccess: () => (setPending(null), setSelected(null), setJustCreated(null)) },
               )
             }
@@ -203,9 +217,28 @@ export function LocationTab({ event, canEdit }: TabProps) {
               {allSymbols.map((p) => <SymbolPill key={p.id} symbol={p} draggable />)}
               <AddTypePill onClick={() => setTypeModal(true)} />
             </div>
+            <div className="mt-4 border-t border-line pt-3">
+              <p className="mb-2 text-xs text-muted">Service points — drag onto the map. Collection points share the crowd between them, so nobody queues at one tent.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {PICKUP_KINDS.map((k) => (
+                  <button
+                    key={k.kind}
+                    type="button"
+                    draggable
+                    title={k.help}
+                    onDragStart={(e) => (e.dataTransfer.setData(KIND_DRAG_TYPE, k.kind), (e.dataTransfer.effectAllowed = 'copy'))}
+                    className="flex cursor-grab items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-text active:cursor-grabbing"
+                    style={{ borderColor: AREA_STYLE[k.kind].color }}
+                  >
+                    <span className="h-3 w-3 rounded-[4px]" style={{ background: AREA_STYLE[k.kind].color }} />
+                    {AREA_STYLE[k.kind].label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </Card>
         )}
-        {sel && !pending && <AreaEditor key={sel.id} area={sel} symbols={allSymbols} onAddType={() => setTypeModal(true)} autoFocusName={justCreated === sel.id} onClose={() => (setSelected(null), setJustCreated(null))} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
+        {sel && !pending && <AreaEditor key={sel.id} area={sel} symbols={allSymbols} timezone={event.timezone} onAddType={() => setTypeModal(true)} autoFocusName={justCreated === sel.id} onClose={() => (setSelected(null), setJustCreated(null))} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
         <SurfaceCard areas={areas.data ?? []} eventId={event.id} />
         {locked && <Alert tone="warn">A formation is locked: perimeter, formation area, exclusions, no-go and emergency zones are frozen. Access, assembly and entry areas can still change.</Alert>}
         {canEdit && (
@@ -408,11 +441,26 @@ function AreaMark({ area, symbols }: { area: AreaRow; symbols: PointSymbol[] }) 
   );
 }
 
-function AreaEditor({ area, symbols, isNew = false, onAddType, onSymbolChange, canEdit, editing, autoFocusName, onClose, onEditShape, onSave, onDelete, busy }: { area: AreaRow; symbols: PointSymbol[]; isNew?: boolean; onAddType: () => void; onSymbolChange?: (id: string) => void; canEdit: boolean; editing: boolean; autoFocusName: boolean; onClose: () => void; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean; symbol: string | null }) => void; onDelete: () => void; busy: boolean }) {
+function AreaEditor({ area, symbols, isNew = false, onAddType, onSymbolChange, timezone, canEdit, editing, autoFocusName, onClose, onEditShape, onSave, onDelete, busy }: { area: AreaRow; symbols: PointSymbol[]; isNew?: boolean; onAddType: () => void; onSymbolChange?: (id: string) => void; canEdit: boolean; editing: boolean; autoFocusName: boolean; onClose: () => void; onEditShape: () => void; timezone: string; onSave: (p: { name: string | null; buffer: number; isPublic: boolean; symbol: string | null; capacity: number | null; opensAt: string | null; closesAt: string | null; details: string | null }) => void; onDelete: () => void; busy: boolean }) {
   const [name, setName] = useState(area.name ?? '');
   const [buffer, setBuffer] = useState(area.safety_buffer_m);
   const [pub, setPub] = useState(area.is_public);
   const [symbol, setSymbol] = useState<string | null>(area.symbol ?? null);
+  const [capacity, setCapacity] = useState<number | null>(area.capacity ?? null);
+  const [opens, setOpens] = useState(isoToZonedLocal(area.opens_at ?? null, timezone));
+  const [closes, setCloses] = useState(isoToZonedLocal(area.closes_at ?? null, timezone));
+  const [details, setDetails] = useState(area.details ?? '');
+  const isPickup = ['collection', 'control', 'bounty'].includes(area.kind);
+  const payload = () => ({
+    name: name.trim() || null,
+    buffer,
+    isPublic: pub,
+    symbol,
+    capacity: isPickup ? capacity : null,
+    opensAt: isPickup && opens ? zonedLocalToIso(opens, timezone) : null,
+    closesAt: isPickup && closes ? zonedLocalToIso(closes, timezone) : null,
+    details: isPickup ? details.trim() || null : null,
+  });
   const bufferMatters = ['exclusion', 'no_go', 'emergency'].includes(area.kind);
   return (
     <Card
@@ -429,7 +477,7 @@ function AreaEditor({ area, symbols, isNew = false, onAddType, onSymbolChange, c
             placeholder={area.kind === 'access_point' ? 'e.g. Medical point' : AREA_STYLE[area.kind].label}
             maxLength={80}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && canEdit && onSave({ name: name.trim() || null, buffer, isPublic: pub, symbol })}
+            onKeyDown={(e) => e.key === 'Enter' && canEdit && onSave(payload())}
           />
         </Field>
         {area.kind === 'access_point' && canEdit && (
@@ -438,6 +486,25 @@ function AreaEditor({ area, symbols, isNew = false, onAddType, onSymbolChange, c
               <SymbolPill key={p.id} symbol={p} draggable selected={symbol === p.id} onClick={() => (setName(p.label), setSymbol(p.id), onSymbolChange?.(p.id))} />
             ))}
             <AddTypePill onClick={onAddType} />
+          </div>
+        )}
+        {isPickup && (
+          <div className="space-y-3 rounded-xl border border-line p-3">
+            <Field
+              label={area.kind === 'collection' ? 'What people collect here' : area.kind === 'bounty' ? 'What people claim here' : 'What staff check here'}
+              hint="Shown to the participants sent here."
+            >
+              <Input value={details} disabled={!canEdit} maxLength={200} placeholder="e.g. One sponsor t-shirt, size on the wristband" onChange={(e) => setDetails(e.target.value)} />
+            </Field>
+            {area.kind === 'collection' && (
+              <Field label="People this point can serve" hint={`Empty = no limit.${area.assigned != null ? ` Currently assigned: ${area.assigned.toLocaleString()}.` : ''}`}>
+                <Input type="number" min={1} max={1000000} value={capacity ?? ''} disabled={!canEdit} placeholder="No limit" onChange={(e) => setCapacity(e.target.value === '' ? null : Number(e.target.value))} />
+              </Field>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Opens"><Input type="datetime-local" value={opens} disabled={!canEdit} onChange={(e) => setOpens(e.target.value)} /></Field>
+              <Field label="Closes"><Input type="datetime-local" value={closes} disabled={!canEdit} onChange={(e) => setCloses(e.target.value)} /></Field>
+            </div>
           </div>
         )}
         {bufferMatters && (
@@ -454,7 +521,7 @@ function AreaEditor({ area, symbols, isNew = false, onAddType, onSymbolChange, c
         {canEdit && (
           <div className="flex justify-between gap-2 pt-2">
             <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={onDelete} disabled={busy}>{isNew ? 'Discard' : 'Delete'}</Button>
-            <Button variant="primary" size="sm" busy={busy} onClick={() => onSave({ name: name.trim() || null, buffer, isPublic: pub, symbol })}>Save</Button>
+            <Button variant="primary" size="sm" busy={busy} onClick={() => onSave(payload())}>Save</Button>
           </div>
         )}
       </div>

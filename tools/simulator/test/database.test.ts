@@ -178,6 +178,58 @@ describe('hand-drawn areas', () => {
   });
 });
 
+describe('briefing & pickup points', () => {
+  it('spreads participants over the collection points, respects capacity, and rebalances', async () => {
+    const s = await buildScenario(pool, 100, { lock: false });
+    const point = (lng: number, cap: number | null, name: string) =>
+      rpc<string>(pool, s.organizer, 'save_event_area', [
+        s.eventId, 'collection', JSON.stringify({ type: 'Point', coordinates: [ANCHOR.lng + lng, ANCHOR.lat] }),
+        name, 0, true, null, null, cap, null, null, 'One t-shirt per person',
+      ]);
+    const a = await point(0.001, 10, 'Tent A');
+    const b = await point(0.002, 10, 'Tent B');
+    await asUser(pool, s.organizer, (c) => c.query(`update public.events set briefing = $2 where id = $1`, [
+      s.eventId,
+      JSON.stringify({ dressCode: { text: 'Plain white t-shirt', colors: ['#ffffff'] }, collect: 'Sponsor t-shirt', bounty: 'Free drink after the photo' }),
+    ]));
+
+    const users = await createUsers(pool, 20, 'pickup');
+    await runPool(users, 10, (u) => rpc(pool, u, 'join_event', [s.joinCode, CONSENT]));
+    const counts = async () =>
+      (await pool.query<{ id: string; n: number }>(
+        `select a.id, count(m.id)::int n from public.event_areas a
+           left join public.event_members m on m.pickup_area_id = a.id
+          where a.event_id = $1 and a.kind = 'collection' group by a.id order by a.id`, [s.eventId])).rows;
+    const spread = await counts();
+    expect(spread.map((r) => r.n).reduce((x, y) => x + y, 0)).toBe(20);
+    expect(Math.abs(spread[0]!.n - spread[1]!.n)).toBeLessThanOrEqual(4); // both tents used, roughly evenly
+    expect(spread.every((r) => r.n <= 10)).toBe(true); // capacity never exceeded
+
+    // The participant is told where to go, and the briefing travels with it.
+    const mine = await rpc<any>(pool, users[0]!, 'get_my_assignment', [s.eventId]);
+    expect([a, b]).toContain(mine.pickup.id);
+    expect(mine.pickup.details).toBe('One t-shirt per person');
+    expect(mine.event.briefing.dressCode.text).toBe('Plain white t-shirt');
+    const preview = await rpc<any>(pool, users[0]!, 'get_event_preview', [s.joinCode]);
+    expect(preview.briefing.bounty).toBe('Free drink after the photo');
+
+    // A third tent opens the day before: everybody is spread again.
+    const c = await point(0.003, null, 'Tent C');
+    const r = await rpc<any>(pool, s.organizer, 'rebalance_pickups', [s.eventId]);
+    expect(r.points).toBe(3);
+    const after = await counts();
+    expect(after.length).toBe(3);
+    expect(Math.max(...after.map((x) => x.n)) - Math.min(...after.map((x) => x.n))).toBeLessThanOrEqual(1);
+    expect(after.some((x) => x.id === c)).toBe(true);
+
+    // An organizer can move one person by hand.
+    const m0 = (await pool.query(`select id from public.event_members where event_id = $1 order by participant_number limit 1`, [s.eventId])).rows[0].id;
+    await rpc(pool, s.organizer, 'set_member_pickup', [m0, c]);
+    const moved = await pool.query(`select pickup_area_id from public.event_members where id = $1`, [m0]);
+    expect(moved.rows[0].pickup_area_id).toBe(c);
+  });
+});
+
 describe('assignment integrity under concurrency', () => {
   for (const n of [1_000, 5_000, 12_000]) {
     it(`${n.toLocaleString()} simultaneous joins (+10% over capacity): no duplicates, exact waitlist`, async () => {

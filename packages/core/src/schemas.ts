@@ -36,6 +36,9 @@ export const areaKindSchema = z.enum([
   'access_point',
   'assembly',
   'entry_zone',
+  'collection',
+  'control',
+  'bounty',
 ]);
 export type AreaKind = z.infer<typeof areaKindSchema>;
 
@@ -76,6 +79,33 @@ export const publicAreaSchema = z.object({
 });
 export type PublicArea = z.infer<typeof publicAreaSchema>;
 
+/** What participants are told: dress code, what to bring / collect, the bounty after the photo. */
+export const briefingSchema = z
+  .object({
+    dressCode: z.object({ text: z.string().optional(), colors: z.array(z.string()).optional() }).optional(),
+    bring: z.string().optional(),
+    collect: z.string().optional(),
+    bounty: z.string().optional(),
+  })
+  .default({});
+export type Briefing = z.infer<typeof briefingSchema>;
+
+/** The one collection / control / bounty point this participant must go to. */
+export const pickupPointSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string().nullable(),
+    kind: z.enum(['collection', 'control', 'bounty']),
+    details: z.string().nullable(),
+    opens_at: z.string().nullable(),
+    closes_at: z.string().nullable(),
+    lat: z.number(),
+    lng: z.number(),
+  })
+  .nullable()
+  .default(null);
+export type PickupPoint = z.infer<typeof pickupPointSchema>;
+
 /** What `get_my_assignment` returns: the participant's entire offline bundle. */
 export const assignmentBundleSchema = z.object({
   event: z.object({
@@ -93,6 +123,7 @@ export const assignmentBundleSchema = z.object({
     countdown: countdownConfigSchema,
     share_message: z.string().nullable(),
     hashtags: z.array(z.string()),
+    briefing: briefingSchema,
     manifest_version: z.number().int(),
     assignment_epoch: z.number().int().default(0),
     participant_total: z.number().int(),
@@ -112,6 +143,7 @@ export const assignmentBundleSchema = z.object({
       target: latLngSchema.nullable(),
     })
     .nullable(),
+  pickup: pickupPointSchema,
   areas: z.array(publicAreaSchema),
   server_time: z.string(),
 });

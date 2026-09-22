@@ -12,6 +12,7 @@ import {
   type ParticipantState,
   type StatusReport,
   type SendResult,
+  briefingSchema,
 } from '@human-pixel/core';
 import { z } from 'zod';
 import { config } from './config';
@@ -69,6 +70,7 @@ export const previewSchema = z.object({
   registrationOpen: z.boolean(),
   allowAnonymousJoin: z.boolean(),
   consentVersion: z.string(),
+  briefing: briefingSchema,
 });
 export type EventPreview = z.infer<typeof previewSchema>;
 
