@@ -193,6 +193,15 @@ export function LocationTab({ event, canEdit }: TabProps) {
             busy={save.isPending}
           />
         )}
+        {!pending && !(sel && sel.kind === 'access_point') && canEdit && (
+          <Card title="Access points">
+            <p className="mb-2.5 text-xs text-muted">Drag a type onto the map, adjust the point, then Save. Drag saved points to move them; click one to rename or delete it.</p>
+            <div className="flex flex-wrap gap-1.5">
+              {allSymbols.map((p) => <SymbolPill key={p.id} symbol={p} draggable />)}
+              <AddTypePill onClick={() => setTypeModal(true)} />
+            </div>
+          </Card>
+        )}
         {sel && !pending && <AreaEditor key={sel.id} area={sel} symbols={allSymbols} onAddType={() => setTypeModal(true)} autoFocusName={justCreated === sel.id} onClose={() => (setSelected(null), setJustCreated(null))} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
         <SurfaceCard areas={areas.data ?? []} eventId={event.id} />
         {locked && <Alert tone="warn">A formation is locked: perimeter, formation area, exclusions, no-go and emergency zones are frozen. Access, assembly and entry areas can still change.</Alert>}
@@ -216,14 +225,6 @@ export function LocationTab({ event, canEdit }: TabProps) {
                   </button>
                 );
               })}
-              <div className="rounded-xl border border-line p-3">
-                <span className="block text-sm font-medium">Access points</span>
-                <span className="mb-2.5 block text-xs text-muted">Drag a type onto the map, adjust the point, then Save. Drag saved points to move them; click one to rename or delete it.</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {allSymbols.map((p) => <SymbolPill key={p.id} symbol={p} draggable />)}
-                  <AddTypePill onClick={() => setTypeModal(true)} />
-                </div>
-              </div>
               <Button variant="ghost" size="sm" icon={<Crosshair size={14} />} onClick={() => setPlacingCenter((v) => !v)}>
                 {placingCenter ? 'Cancel' : 'Set event center'}
               </Button>
