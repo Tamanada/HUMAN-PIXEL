@@ -242,34 +242,25 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
             onKeyDown={(e) => e.key === 'Enter' && canEdit && onSave({ name: name.trim() || null, buffer, isPublic: pub, symbol })}
           />
         </Field>
-        {area.kind === 'access_point' && (
-          <div>
-            <p className="mb-1.5 text-xs text-muted">Type (colour and pictogram follow ISO 7010 / ISO 3864 safety signs)</p>
-            <div className="flex flex-wrap gap-1.5">
-              {POINT_SYMBOLS.map((s) => {
-                const Icon = s.icon;
-                const on = symbol === s.id;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    disabled={!canEdit}
-                    title={s.norm}
-                    onClick={() => {
-                      // The preset name follows the type unless the organizer typed their own.
-                      if (!name.trim() || POINT_SYMBOLS.some((p) => p.label === name)) setName(s.id === 'other' ? '' : s.label);
-                      setSymbol(s.id);
-                    }}
-                    className={`flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-xs ${on ? 'border-text text-text' : 'border-line text-muted hover:border-muted hover:text-text'}`}
-                  >
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: s.color }}>
-                      <Icon size={12} color={s.ink} strokeWidth={2.6} />
-                    </span>
-                    {s.label}
-                  </button>
-                );
-              })}
-            </div>
+        {area.kind === 'access_point' && canEdit && (
+          <div className="flex flex-wrap gap-1.5">
+            {POINT_SYMBOLS.map((p) => {
+              const Icon = p.icon;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  title={p.norm}
+                  onClick={() => (setName(p.label), setSymbol(p.id))}
+                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${symbol === p.id ? 'border-pixel bg-pixel/10 text-pixel' : 'border-line text-muted hover:border-muted hover:text-text'}`}
+                >
+                  <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ background: p.color }}>
+                    <Icon size={10} color={p.ink} strokeWidth={2.8} />
+                  </span>
+                  {p.label}
+                </button>
+              );
+            })}
           </div>
         )}
         {bufferMatters && (

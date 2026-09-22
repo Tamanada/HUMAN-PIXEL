@@ -16,15 +16,11 @@ import {
   DoorOpen,
   Droplet,
   Drone,
-  FireExtinguisher,
   Info,
   LogIn,
-  MapPin,
   PackageSearch,
   ShieldCheck,
   Toilet,
-  TriangleAlert,
-  Users,
   type LucideProps,
 } from 'lucide-react';
 
@@ -48,21 +44,17 @@ export interface PointSymbol {
 }
 
 export const POINT_SYMBOLS: PointSymbol[] = [
+  { id: 'entrance', label: 'Entrance', color: SAFETY.blue, ink: '#ffffff', icon: LogIn, norm: 'ISO 7001 public information, blue' },
+  { id: 'exit', label: 'Exit', color: SAFETY.green, ink: '#ffffff', icon: DoorOpen, norm: 'ISO 7010 E001 (emergency exit), safety green' },
   { id: 'medical', label: 'Medical point', color: SAFETY.green, ink: '#ffffff', icon: Cross, norm: 'ISO 7010 E003 (first aid), safety green' },
   { id: 'first_aid', label: 'First aid', color: SAFETY.green, ink: '#ffffff', icon: BriefcaseMedical, norm: 'ISO 7010 E003, safety green' },
-  { id: 'exit', label: 'Exit', color: SAFETY.green, ink: '#ffffff', icon: DoorOpen, norm: 'ISO 7010 E001 (emergency exit), safety green' },
-  { id: 'assembly', label: 'Assembly point', color: SAFETY.green, ink: '#ffffff', icon: Users, norm: 'ISO 7010 E007 (evacuation assembly point), safety green' },
-  { id: 'fire_extinguisher', label: 'Fire extinguisher', color: SAFETY.red, ink: '#ffffff', icon: FireExtinguisher, norm: 'ISO 7010 F001, safety red' },
-  { id: 'danger', label: 'Danger', color: SAFETY.yellow, ink: '#000000', icon: TriangleAlert, norm: 'ISO 7010 W001 (general warning), safety yellow' },
-  { id: 'drone', label: 'Drone team', color: SAFETY.yellow, ink: '#000000', icon: Drone, norm: 'Warning family (overhead drone operations), safety yellow' },
-  { id: 'security', label: 'Security', color: SAFETY.blue, ink: '#ffffff', icon: ShieldCheck, norm: 'Information / mandatory family, safety blue' },
   { id: 'staff', label: 'Staff', color: SAFETY.blue, ink: '#ffffff', icon: BadgeCheck, norm: 'Information family, safety blue' },
-  { id: 'entrance', label: 'Entrance', color: SAFETY.blue, ink: '#ffffff', icon: LogIn, norm: 'ISO 7001 public information, blue' },
   { id: 'info', label: 'Info desk', color: SAFETY.blue, ink: '#ffffff', icon: Info, norm: 'ISO 7001 PI PF 004 (information), blue' },
   { id: 'water', label: 'Water', color: SAFETY.blue, ink: '#ffffff', icon: Droplet, norm: 'ISO 7001 PI PF 006 (drinking water), blue' },
   { id: 'toilets', label: 'Toilets', color: SAFETY.blue, ink: '#ffffff', icon: Toilet, norm: 'ISO 7001 PI PF 008 (toilets), blue' },
   { id: 'lost_found', label: 'Lost & found', color: SAFETY.blue, ink: '#ffffff', icon: PackageSearch, norm: 'ISO 7001 PI PF 011 (lost property), blue' },
-  { id: 'other', label: 'Other', color: SAFETY.grey, ink: '#ffffff', icon: MapPin, norm: 'Generic point' },
+  { id: 'security', label: 'Security', color: SAFETY.blue, ink: '#ffffff', icon: ShieldCheck, norm: 'Information / mandatory family, safety blue' },
+  { id: 'drone', label: 'Drone team', color: SAFETY.yellow, ink: '#000000', icon: Drone, norm: 'Warning family (overhead drone operations), safety yellow' },
 ];
 
 const BY_ID = new Map(POINT_SYMBOLS.map((s) => [s.id, s]));
