@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Crosshair, Trash2 } from 'lucide-react';
+import { Crosshair, PenLine, Trash2 } from 'lucide-react';
 import { surfaceCapacity } from '@human-pixel/core';
 import { Alert, Badge, Button, Card, Field, Input, Toggle } from '../../components/ui';
-import { AREA_STYLE, MapView, type DrawMode } from '../../components/MapView';
+import { AREA_STYLE, MapView, type DrawMode, type EditMode } from '../../components/MapView';
 import { rpc, supabase } from '../../lib/supabase';
 import type { AreaRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
@@ -27,6 +27,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
   const qc = useQueryClient();
   const [tool, setTool] = useState<(typeof TOOLS)[number] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [placingCenter, setPlacingCenter] = useState(false);
   const locked = !!event.active_formation_id;
   const frozenKinds = new Set(['perimeter', 'formation_area', 'exclusion', 'no_go', 'emergency']);
@@ -72,19 +73,42 @@ export function LocationTab({ event, canEdit }: TabProps) {
   });
 
   const draw: DrawMode = useMemo(
-    () => (tool ? { kind: tool.shape, color: AREA_STYLE[tool.kind].color, onDone: (geom) => (save.mutate({ kind: tool.kind, geom }), setTool(null)) } : null),
+    () =>
+      tool
+        ? { kind: tool.shape, color: AREA_STYLE[tool.kind].color, onDone: (geom) => (save.mutate({ kind: tool.kind, geom }), setTool(null)), onCancel: () => setTool(null) }
+        : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tool],
   );
   const onMapClick = useCallback((p: { lat: number; lng: number }) => placingCenter && setCenter.mutate(p), [placingCenter, setCenter]);
   const sel = (areas.data ?? []).find((a) => a.id === selected) ?? null;
+  const editing = (areas.data ?? []).find((a) => a.id === editingId && a.geom.type === 'Polygon') ?? null;
+  const edit: EditMode = useMemo(
+    () =>
+      editing
+        ? {
+            geom: editing.geom as GeoJSON.Polygon,
+            color: AREA_STYLE[editing.kind].color,
+            busy: save.isPending,
+            onSave: (geom) =>
+              save.mutate(
+                { kind: editing.kind, geom, id: editing.id, name: editing.name, buffer: editing.safety_buffer_m, isPublic: editing.is_public },
+                { onSuccess: () => setEditingId(null) },
+              ),
+            onCancel: () => setEditingId(null),
+          }
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editing?.id, editing?.geom, save.isPending],
+  );
   const error = save.error ?? remove.error ?? setCenter.error;
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
       <div className="space-y-3">
         <MapView
-          areas={areas.data ?? []}
+          areas={(areas.data ?? []).filter((a) => a.id !== editingId)}
+          edit={edit}
           center={event.center_lat != null ? { lat: event.center_lat, lng: event.center_lng! } : null}
           draw={draw}
           selectedAreaId={selected}
@@ -110,7 +134,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
                   <button
                     key={t.kind}
                     disabled={disabled}
-                    onClick={() => setTool(tool?.kind === t.kind ? null : t)}
+                    onClick={() => (setEditingId(null), setTool(tool?.kind === t.kind ? null : t))}
                     className={`flex items-start gap-3 rounded-xl border p-3 text-left transition disabled:opacity-40 ${tool?.kind === t.kind ? 'border-pixel bg-pixel/10' : 'border-line hover:border-muted'}`}
                   >
                     <span className="mt-1 h-3 w-3 shrink-0 rounded-sm" style={{ background: AREA_STYLE[t.kind].color }} />
@@ -142,7 +166,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
             ))}
           </ul>
         </Card>
-        {sel && <AreaEditor key={sel.id} area={sel} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
+        {sel && <AreaEditor key={sel.id} area={sel} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
       </div>
     </div>
   );
@@ -176,7 +200,7 @@ function SurfaceCard({ areas, eventId }: { areas: AreaRow[]; eventId: string }) 
   );
 }
 
-function AreaEditor({ area, canEdit, onSave, onDelete, busy }: { area: AreaRow; canEdit: boolean; onSave: (p: { name: string | null; buffer: number; isPublic: boolean }) => void; onDelete: () => void; busy: boolean }) {
+function AreaEditor({ area, canEdit, editing, onEditShape, onSave, onDelete, busy }: { area: AreaRow; canEdit: boolean; editing: boolean; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean }) => void; onDelete: () => void; busy: boolean }) {
   const [name, setName] = useState(area.name ?? '');
   const [buffer, setBuffer] = useState(area.safety_buffer_m);
   const [pub, setPub] = useState(area.is_public);
@@ -191,6 +215,11 @@ function AreaEditor({ area, canEdit, onSave, onDelete, busy }: { area: AreaRow; 
           </Field>
         )}
         {area.kind !== 'formation_area' && <Toggle checked={pub} onChange={setPub} label="Shown to participants" />}
+        {canEdit && area.geom.type === 'Polygon' && (
+          <Button variant="ghost" size="sm" icon={<PenLine size={14} />} disabled={editing} onClick={onEditShape}>
+            {editing ? 'Editing on the map…' : 'Edit shape (move corners)'}
+          </Button>
+        )}
         {canEdit && (
           <div className="flex justify-between gap-2 pt-2">
             <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={onDelete} disabled={busy}>Delete</Button>

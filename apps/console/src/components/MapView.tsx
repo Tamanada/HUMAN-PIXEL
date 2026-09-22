@@ -6,8 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { GeoJSONSource, LngLatLike, Map as MlMap } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import { Layers, Lock, LockOpen, RotateCcw, RotateCw } from 'lucide-react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import { Check, Layers, Lock, LockOpen, RotateCcw, RotateCw, Undo2, X } from 'lucide-react';
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { config } from '../lib/supabase';
 import type { AreaRow } from '../lib/types';
 
@@ -22,7 +22,10 @@ export const AREA_STYLE: Record<AreaRow['kind'], { color: string; label: string;
   entry_zone: { color: '#9ad0ff', label: 'Entry zone', fill: 0.12 },
 };
 
-export type DrawMode = { kind: 'polygon' | 'point'; color?: string; onDone: (geom: GeoJSON.Polygon | GeoJSON.Point) => void } | null;
+export type DrawMode = { kind: 'polygon' | 'point'; color?: string; onDone: (geom: GeoJSON.Polygon | GeoJSON.Point) => void; onCancel?: () => void } | null;
+
+/** Reshape an existing polygon: drag corners, add corners on edges, remove corners. */
+export type EditMode = { geom: GeoJSON.Polygon; color?: string; busy?: boolean; onSave: (geom: GeoJSON.Polygon) => void; onCancel: () => void } | null;
 
 export interface PointsLayer {
   lng: Float64Array | number[];
@@ -38,6 +41,7 @@ interface Props {
   points?: PointsLayer | null;
   center?: { lat: number; lng: number } | null;
   draw?: DrawMode;
+  edit?: EditMode;
   height?: number | string;
   selectedAreaId?: string | null;
   onAreaClick?: (id: string) => void;
@@ -79,13 +83,17 @@ function writeBearing(key: string | undefined, deg: number) {
 }
 const norm180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 
-export function MapView({ areas = [], points, center, draw, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange }: Props) {
+export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
   const [satellite, setSatellite] = useState(defaultSatellite && !!config.satelliteTiles);
   const drawState = useRef<{ coords: [number, number][]; tracing?: boolean }>({ coords: [] });
   const [freehand, setFreehand] = useState(false);
+  // Corners placed so far (drives the Undo / Finish buttons) and the actions of the active tool.
+  const [draftCount, setDraftCount] = useState(0);
+  const [editDepth, setEditDepth] = useState(0);
+  const actions = useRef<{ undo?: () => void; cancel?: () => void; finish?: () => void; save?: () => void }>({});
   // Locked: the view cannot move at all (no pan, zoom, rotate), so clicks only place corners.
   const [locked, setLocked] = useState(false);
   const fitted = useRef(false);
@@ -150,6 +158,13 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
         filter: isRole('vertex'),
         paint: { 'circle-radius': ['case', ['get', 'first'], 8, 5], 'circle-color': '#fff', 'circle-stroke-color': DRAFT_COLOR, 'circle-stroke-width': 3 },
       });
+      m.addSource('edit', { type: 'geojson', data: EMPTY });
+      const editRole = (role: string) => ['==', ['get', 'role'], role] as maplibregl.FilterSpecification;
+      m.addLayer({ id: 'edit-fill', type: 'fill', source: 'edit', filter: editRole('fill'), paint: { 'fill-color': DRAFT_COLOR, 'fill-opacity': 0.18 } });
+      m.addLayer({ id: 'edit-casing', type: 'line', source: 'edit', filter: editRole('fill'), layout: { 'line-join': 'round' }, paint: { 'line-color': '#000', 'line-width': 6, 'line-opacity': 0.55 } });
+      m.addLayer({ id: 'edit-line', type: 'line', source: 'edit', filter: editRole('fill'), layout: { 'line-join': 'round' }, paint: { 'line-color': DRAFT_COLOR, 'line-width': 3 } });
+      m.addLayer({ id: 'edit-mid', type: 'circle', source: 'edit', filter: editRole('mid'), paint: { 'circle-radius': 4.5, 'circle-color': '#000', 'circle-opacity': 0.55, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
+      m.addLayer({ id: 'edit-vertex', type: 'circle', source: 'edit', filter: editRole('vertex'), paint: { 'circle-radius': 7, 'circle-color': '#fff', 'circle-stroke-color': DRAFT_COLOR, 'circle-stroke-width': 3 } });
       setReady(true);
     });
     // Rotate: right-click drag / Ctrl+drag (built in), two fingers, or the ↺ ↻ buttons.
@@ -229,8 +244,8 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
 
   // Interaction: draw / click. Callbacks go through refs so a parent re-render never resets a
   // drawing in progress.
-  const cb = useRef({ onAreaClick, onMapClick, draw });
-  cb.current = { onAreaClick, onMapClick, draw };
+  const cb = useRef({ onAreaClick, onMapClick, draw, edit });
+  cb.current = { onAreaClick, onMapClick, draw, edit };
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
@@ -261,11 +276,13 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       if (trace && st.tracing && c.length >= 3) features.push(feat({ type: 'LineString', coordinates: [c[c.length - 1]!, c[0]!] }, { role: 'rubber' }));
       if (!trace) c.forEach((p, i) => features.push(feat({ type: 'Point', coordinates: p }, { role: 'vertex', first: i === 0 && c.length >= 3 })));
       draft.setData({ type: 'FeatureCollection', features });
+      setDraftCount(c.length);
     };
     const reset = () => {
       st.coords = [];
       st.tracing = false;
       draft.setData(EMPTY);
+      setDraftCount(0);
     };
     const finish = () => {
       const d = cb.current.draw;
@@ -275,7 +292,22 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       if (d?.kind === 'polygon' && c.length >= 3) d.onDone({ type: 'Polygon', coordinates: [[...c, c[0]!]] });
       reset();
     };
+    if (draw) {
+      actions.current = {
+        undo: () => {
+          st.coords.pop();
+          render();
+        },
+        // Cancel = forget this shape and leave the tool.
+        cancel: () => {
+          reset();
+          cb.current.draw?.onCancel?.();
+        },
+        finish,
+      };
+    }
     const click = (e: maplibregl.MapMouseEvent) => {
+      if (cb.current.edit) return;
       const d = cb.current.draw;
       if (d) {
         if (d.kind === 'point') return d.onDone({ type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] });
@@ -346,6 +378,119 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
     };
   }, [draw, ready, freehand]);
 
+  // Reshape: drag a corner to move it, drag a small edge handle to add a corner there, double-click a
+  // corner to remove it. Every change is undoable; nothing is saved until "Save shape".
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    const src = m.getSource('edit') as GeoJSONSource;
+    if (!edit) {
+      src.setData(EMPTY);
+      return;
+    }
+    const color = edit.color ?? '#ffffff';
+    m.setPaintProperty('edit-line', 'line-color', color);
+    m.setPaintProperty('edit-fill', 'fill-color', color);
+    m.setPaintProperty('edit-vertex', 'circle-stroke-color', color);
+    const holes = edit.geom.coordinates.slice(1);
+    let ring = edit.geom.coordinates[0]!.slice(0, -1).map((c) => [c[0]!, c[1]!] as [number, number]);
+    const history: [number, number][][] = [];
+    let dragging: number | null = null;
+    const snapshot = () => {
+      history.push(ring.map((c) => [...c] as [number, number]));
+      setEditDepth(history.length);
+    };
+    const render = () => {
+      const f = (geometry: GeoJSON.Geometry, props: Record<string, unknown>): GeoJSON.Feature => ({ type: 'Feature', geometry, properties: props });
+      const mids = ring.map((a, i) => {
+        const b = ring[(i + 1) % ring.length]!;
+        return f({ type: 'Point', coordinates: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] }, { role: 'mid', i });
+      });
+      src.setData({
+        type: 'FeatureCollection',
+        features: [
+          f({ type: 'Polygon', coordinates: [[...ring, ring[0]!], ...holes] }, { role: 'fill' }),
+          ...mids,
+          ...ring.map((c, i) => f({ type: 'Point', coordinates: c }, { role: 'vertex', i })),
+        ],
+      });
+    };
+    const hitAt = (pt: maplibregl.Point) => {
+      const box: [maplibregl.PointLike, maplibregl.PointLike] = [[pt.x - 8, pt.y - 8], [pt.x + 8, pt.y + 8]];
+      const v = m.queryRenderedFeatures(box, { layers: ['edit-vertex'] })[0];
+      if (v) return { role: 'vertex' as const, i: Number(v.properties?.i) };
+      const mid = m.queryRenderedFeatures(box, { layers: ['edit-mid'] })[0];
+      if (mid) return { role: 'mid' as const, i: Number(mid.properties?.i) };
+      return null;
+    };
+    const down = (e: maplibregl.MapMouseEvent) => {
+      if (e.originalEvent.button !== 0) return;
+      const hit = hitAt(e.point);
+      if (!hit) return;
+      e.preventDefault(); // keeps the map still while a corner moves
+      snapshot();
+      if (hit.role === 'mid') {
+        ring.splice(hit.i + 1, 0, [e.lngLat.lng, e.lngLat.lat]);
+        dragging = hit.i + 1;
+      } else dragging = hit.i;
+      render();
+    };
+    const move = (e: maplibregl.MapMouseEvent) => {
+      if (dragging == null) {
+        const hit = hitAt(e.point);
+        m.getCanvas().style.cursor = hit ? (hit.role === 'vertex' ? 'move' : 'copy') : '';
+        return;
+      }
+      ring[dragging] = [e.lngLat.lng, e.lngLat.lat];
+      render();
+    };
+    const up = () => {
+      dragging = null;
+    };
+    const dbl = (e: maplibregl.MapMouseEvent) => {
+      e.preventDefault();
+      const hit = hitAt(e.point);
+      if (hit?.role !== 'vertex' || ring.length <= 3) return;
+      // The double-click's first press already pushed a snapshot of the untouched ring.
+      ring.splice(hit.i, 1);
+      render();
+    };
+    const undo = () => {
+      const prev = history.pop();
+      if (!prev) return;
+      ring = prev;
+      setEditDepth(history.length);
+      render();
+    };
+    const save = () => cb.current.edit?.onSave({ type: 'Polygon', coordinates: [[...ring, ring[0]!], ...holes] });
+    actions.current = { undo, save, cancel: () => cb.current.edit?.onCancel() };
+    const key = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        undo();
+      } else if (e.key === 'Escape') cb.current.edit?.onCancel();
+      else if (e.key === 'Enter') save();
+    };
+    setEditDepth(0);
+    render();
+    m.on('mousedown', down);
+    m.on('mousemove', move);
+    m.on('mouseup', up);
+    m.on('dblclick', dbl);
+    window.addEventListener('keydown', key);
+    return () => {
+      m.off('mousedown', down);
+      m.off('mousemove', move);
+      m.off('mouseup', up);
+      m.off('dblclick', dbl);
+      window.removeEventListener('keydown', key);
+      m.getCanvas().style.cursor = '';
+      src.setData(EMPTY);
+    };
+    // Re-initialise only when another shape is opened for editing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit?.geom, ready]);
+
   // Which gestures move the view: none when locked; in freehand the left drag draws instead of panning.
   useEffect(() => {
     const m = map.current;
@@ -358,9 +503,9 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
     set(m.dragRotate, !locked);
     set(m.keyboard, !locked);
     set(m.touchZoomRotate, !locked);
-    set(m.doubleClickZoom, !locked && !draw);
+    set(m.doubleClickZoom, !locked && !draw && !edit);
     m.getContainer().classList.toggle('hp-map-locked', locked);
-  }, [locked, draw, freehand, ready]);
+  }, [locked, draw, edit, freehand, ready]);
 
   const rotateTo = (deg: number) => {
     const m = map.current;
@@ -401,7 +546,7 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
         <button disabled={locked} aria-label="Reset to north" onClick={() => rotateTo(0)} className="hp-digits min-w-12 rounded-md px-1.5 py-1 hover:bg-surface-2 disabled:opacity-60">{Math.round(norm180(bearing))}°</button>
         <button disabled={locked} aria-label="Rotate right" onClick={(e) => rotateTo(bearing + step(e))} className="rounded-md p-1.5 hover:bg-surface-2 disabled:opacity-40"><RotateCw size={14} /></button>
       </div>
-      {(draw || message) && (
+      {(draw || edit || message) && (
         <div className="absolute bottom-3 left-1/2 flex w-[min(92%,560px)] -translate-x-1/2 flex-col items-center gap-2">
           {message && <div role="alert" className="w-full rounded-lg border border-bad/60 bg-surface/95 px-3 py-2 text-xs text-bad backdrop-blur">{message}</div>}
           {draw && (
@@ -417,14 +562,48 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
                 {draw.kind === 'point'
                   ? 'Click the map to place the point'
                   : freehand
-                    ? 'Hold the left button and trace the outline; release to finish · Esc cancels · right-drag rotates'
-                    : 'Click each corner · click the first corner or double-click to finish · Backspace undo · Esc restart'}
+                    ? 'Hold the left button and trace the outline; release to finish · right-drag rotates'
+                    : 'Click each corner · click the first corner or double-click to finish'}
               </span>
+              <div className="flex gap-1">
+                {draw.kind === 'polygon' && !freehand && (
+                  <>
+                    <BarButton icon={<Undo2 size={13} />} disabled={draftCount === 0} onClick={() => actions.current.undo?.()} title="Remove the last corner (Backspace)">Undo</BarButton>
+                    <BarButton icon={<Check size={13} />} disabled={draftCount < 3} onClick={() => actions.current.finish?.()} title="Close and save the shape (Enter)" primary>Finish</BarButton>
+                  </>
+                )}
+                <BarButton icon={<X size={13} />} onClick={() => actions.current.cancel?.()} title="Throw this shape away">Cancel</BarButton>
+              </div>
+            </div>
+          )}
+          {edit && (
+            <div className="flex w-full flex-wrap items-center justify-center gap-2 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs backdrop-blur">
+              <span className="text-muted">Drag a corner to move it · drag a small dot on an edge to add a corner · double-click a corner to remove it</span>
+              <div className="flex gap-1">
+                <BarButton icon={<Undo2 size={13} />} disabled={editDepth === 0} onClick={() => actions.current.undo?.()} title="Undo the last change (Ctrl+Z)">Undo</BarButton>
+                <BarButton icon={<X size={13} />} onClick={() => actions.current.cancel?.()} title="Discard the changes (Esc)">Cancel</BarButton>
+                <BarButton icon={<Check size={13} />} disabled={edit.busy} onClick={() => actions.current.save?.()} title="Save the new shape (Enter)" primary>Save shape</BarButton>
+              </div>
             </div>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+function BarButton({ icon, children, onClick, disabled, title, primary }: { icon: ReactNode; children: ReactNode; onClick: () => void; disabled?: boolean; title?: string; primary?: boolean }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex items-center gap-1 rounded-md px-2 py-1 font-medium disabled:opacity-40 ${primary ? 'bg-pixel text-on-pixel' : 'bg-surface-2 text-text hover:bg-line'}`}
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
 
