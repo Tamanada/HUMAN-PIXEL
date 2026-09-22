@@ -10,6 +10,7 @@ import type { AreaRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
 import { constraintsFromAreas } from './formationClient';
 import { useAreas } from './hooks';
+import { POINT_SYMBOLS, symbolOf } from '../../lib/symbols';
 
 const TOOLS: { kind: AreaRow['kind']; shape: 'polygon' | 'point'; help: string }[] = [
   { kind: 'perimeter', shape: 'polygon', help: 'The whole event ground. Required. Every pixel must be inside.' },
@@ -38,7 +39,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
     void qc.invalidateQueries({ queryKey: ['areas', event.id] });
   };
   const save = useMutation({
-    mutationFn: (a: { kind: AreaRow['kind']; geom: GeoJSON.Geometry; name?: string | null; buffer?: number; isPublic?: boolean | null; id?: string | null }) =>
+    mutationFn: (a: { kind: AreaRow['kind']; geom: GeoJSON.Geometry; name?: string | null; buffer?: number; isPublic?: boolean | null; id?: string | null; symbol?: string | null }) =>
       rpc<string>('save_event_area', {
         p_event_id: event.id,
         p_kind: a.kind,
@@ -47,6 +48,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
         p_safety_buffer_m: a.buffer ?? (a.kind === 'exclusion' ? 2 : 0),
         p_is_public: a.isPublic ?? null,
         p_area_id: a.id ?? null,
+        p_symbol: a.symbol ?? null,
       }),
     onSuccess: (id, vars) => {
       setSelected(id);
@@ -95,7 +97,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
             busy: save.isPending,
             onSave: (geom) =>
               save.mutate(
-                { kind: editing.kind, geom, id: editing.id, name: editing.name, buffer: editing.safety_buffer_m, isPublic: editing.is_public },
+                { kind: editing.kind, geom, id: editing.id, name: editing.name, buffer: editing.safety_buffer_m, isPublic: editing.is_public, symbol: editing.symbol },
                 { onSuccess: () => setEditingId(null) },
               ),
             onCancel: () => setEditingId(null),
@@ -163,8 +165,8 @@ export function LocationTab({ event, canEdit }: TabProps) {
               <li key={a.id}>
                 <button onClick={() => setSelected(a.id)} className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm ${a.id === selected ? 'bg-surface-2' : ''}`}>
                   <span className="flex items-center gap-2.5">
-                    <span className="h-2.5 w-2.5 rounded-sm" style={{ background: AREA_STYLE[a.kind].color }} />
-                    {a.name || AREA_STYLE[a.kind].label}
+                    <AreaMark area={a} />
+                    {a.name || symbolOf(a.symbol)?.label || AREA_STYLE[a.kind].label}
                   </span>
                   <span className="hp-digits text-xs text-muted">{a.area_m2 ? `${Math.round(a.area_m2).toLocaleString()} m²` : ''}</span>
                 </button>
@@ -205,12 +207,23 @@ function SurfaceCard({ areas, eventId }: { areas: AreaRow[]; eventId: string }) 
   );
 }
 
-const POINT_PRESETS = ['Entrance', 'Exit', 'Medical point', 'First aid', 'Staff', 'Info desk', 'Water', 'Toilets', 'Lost & found', 'Security', 'Drone team'];
+/** List marker: the symbol pictogram for typed points, the zone colour otherwise. */
+function AreaMark({ area }: { area: AreaRow }) {
+  const s = symbolOf(area.symbol);
+  if (!s) return <span className="h-2.5 w-2.5 rounded-sm" style={{ background: AREA_STYLE[area.kind].color }} />;
+  const Icon = s.icon;
+  return (
+    <span className="flex h-5 w-5 items-center justify-center rounded-[5px]" style={{ background: s.color }} title={s.norm}>
+      <Icon size={12} color={s.ink} strokeWidth={2.6} />
+    </span>
+  );
+}
 
-function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShape, onSave, onDelete, busy }: { area: AreaRow; canEdit: boolean; editing: boolean; autoFocusName: boolean; onClose: () => void; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean }) => void; onDelete: () => void; busy: boolean }) {
+function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShape, onSave, onDelete, busy }: { area: AreaRow; canEdit: boolean; editing: boolean; autoFocusName: boolean; onClose: () => void; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean; symbol: string | null }) => void; onDelete: () => void; busy: boolean }) {
   const [name, setName] = useState(area.name ?? '');
   const [buffer, setBuffer] = useState(area.safety_buffer_m);
   const [pub, setPub] = useState(area.is_public);
+  const [symbol, setSymbol] = useState<string | null>(area.symbol ?? null);
   const bufferMatters = ['exclusion', 'no_go', 'emergency'].includes(area.kind);
   return (
     <Card
@@ -226,21 +239,37 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
             placeholder={area.kind === 'access_point' ? 'e.g. Medical point' : AREA_STYLE[area.kind].label}
             maxLength={80}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && canEdit && onSave({ name: name.trim() || null, buffer, isPublic: pub })}
+            onKeyDown={(e) => e.key === 'Enter' && canEdit && onSave({ name: name.trim() || null, buffer, isPublic: pub, symbol })}
           />
         </Field>
-        {area.kind === 'access_point' && canEdit && (
-          <div className="flex flex-wrap gap-1.5">
-            {POINT_PRESETS.map((label) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setName(label)}
-                className={`rounded-full border px-2.5 py-1 text-xs ${name === label ? 'border-pixel bg-pixel/10 text-pixel' : 'border-line text-muted hover:border-muted hover:text-text'}`}
-              >
-                {label}
-              </button>
-            ))}
+        {area.kind === 'access_point' && (
+          <div>
+            <p className="mb-1.5 text-xs text-muted">Type (colour and pictogram follow ISO 7010 / ISO 3864 safety signs)</p>
+            <div className="flex flex-wrap gap-1.5">
+              {POINT_SYMBOLS.map((s) => {
+                const Icon = s.icon;
+                const on = symbol === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    disabled={!canEdit}
+                    title={s.norm}
+                    onClick={() => {
+                      // The preset name follows the type unless the organizer typed their own.
+                      if (!name.trim() || POINT_SYMBOLS.some((p) => p.label === name)) setName(s.id === 'other' ? '' : s.label);
+                      setSymbol(s.id);
+                    }}
+                    className={`flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-xs ${on ? 'border-text text-text' : 'border-line text-muted hover:border-muted hover:text-text'}`}
+                  >
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: s.color }}>
+                      <Icon size={12} color={s.ink} strokeWidth={2.6} />
+                    </span>
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
         {bufferMatters && (
@@ -257,7 +286,7 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
         {canEdit && (
           <div className="flex justify-between gap-2 pt-2">
             <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={onDelete} disabled={busy}>Delete</Button>
-            <Button variant="primary" size="sm" busy={busy} onClick={() => onSave({ name: name.trim() || null, buffer, isPublic: pub })}>Save</Button>
+            <Button variant="primary" size="sm" busy={busy} onClick={() => onSave({ name: name.trim() || null, buffer, isPublic: pub, symbol })}>Save</Button>
           </div>
         )}
       </div>

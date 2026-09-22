@@ -40,6 +40,8 @@ export interface AreaRow {
   event_id: string;
   kind: 'perimeter' | 'formation_area' | 'exclusion' | 'no_go' | 'emergency' | 'access_point' | 'assembly' | 'entry_zone';
   name: string | null;
+  /** Access-point symbol (see lib/symbols): medical, exit, toilets… */
+  symbol?: string | null;
   geom: GeoJSON.Geometry;
   safety_buffer_m: number;
   is_public: boolean;

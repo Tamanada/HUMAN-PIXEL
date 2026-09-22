@@ -9,6 +9,7 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&ur
 import { Check, Layers, Lock, LockOpen, RotateCcw, RotateCw, Undo2, X } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { config } from '../lib/supabase';
+import { loadSymbolImages } from '../lib/symbols';
 import type { AreaRow } from '../lib/types';
 
 export const AREA_STYLE: Record<AreaRow['kind'], { color: string; label: string; fill: number }> = {
@@ -133,7 +134,18 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         filter: ['==', ['geometry-type'], 'Polygon'],
         paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'selected'], 3.5, 2], 'line-dasharray': ['case', ['==', ['get', 'kind'], 'formation_area'], ['literal', [2, 2]], ['literal', [1, 0]]] },
       });
-      m.addLayer({ id: 'areas-point', type: 'circle', source: 'areas', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 7, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#000', 'circle-stroke-width': 1.5 } });
+      // Symbol icons (ISO safety colours) for typed access points; a plain dot for untyped ones.
+      void loadSymbolImages((id, img) => {
+        if (!m.hasImage(id)) m.addImage(id, img, { pixelRatio: 2 });
+      });
+      m.addLayer({
+        id: 'areas-symbol',
+        type: 'symbol',
+        source: 'areas',
+        filter: ['all', ['==', ['geometry-type'], 'Point'], ['!=', ['get', 'symbol'], '']],
+        layout: { 'icon-image': ['concat', 'hp-sym-', ['get', 'symbol']], 'icon-size': 1.2, 'icon-allow-overlap': true, 'icon-ignore-placement': true },
+      });
+      m.addLayer({ id: 'areas-point', type: 'circle', source: 'areas', filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'symbol'], '']], paint: { 'circle-radius': 7, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#000', 'circle-stroke-width': 1.5 } });
       // Names next to points (Medical point, Entrance…) and inside named zones.
       m.addLayer({
         id: 'areas-label',
@@ -144,7 +156,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
           'text-field': ['get', 'name'],
           'text-font': ['Noto Sans Bold'],
           'text-size': 12,
-          'text-offset': ['case', ['==', ['geometry-type'], 'Point'], ['literal', [0, 1.3]], ['literal', [0, 0]]],
+          'text-offset': ['case', ['==', ['geometry-type'], 'Point'], ['literal', [0, 1.5]], ['literal', [0, 0]]],
           'text-anchor': ['case', ['==', ['geometry-type'], 'Point'], 'top', 'center'],
           'text-allow-overlap': false,
         },
@@ -208,7 +220,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         type: 'Feature',
         id: a.id,
         geometry: a.geom,
-        properties: { id: a.id, kind: a.kind, name: a.name ?? '', color: AREA_STYLE[a.kind].color, fill: AREA_STYLE[a.kind].fill, selected: a.id === selectedAreaId },
+        properties: { id: a.id, kind: a.kind, name: a.name ?? '', symbol: a.symbol ?? '', color: AREA_STYLE[a.kind].color, fill: AREA_STYLE[a.kind].fill, selected: a.id === selectedAreaId },
       })),
     };
     (m.getSource('areas') as GeoJSONSource).setData(fc);
@@ -339,7 +351,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         render();
         return;
       }
-      const hit = m.queryRenderedFeatures(e.point, { layers: ['areas-fill', 'areas-point'] })[0];
+      const hit = m.queryRenderedFeatures(e.point, { layers: ['areas-symbol', 'areas-point', 'areas-fill'] })[0];
       if (hit && cb.current.onAreaClick) cb.current.onAreaClick(String(hit.properties?.id));
       else cb.current.onMapClick?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     };
