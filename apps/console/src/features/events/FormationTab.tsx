@@ -280,6 +280,11 @@ export function FormationTab({ event, canEdit }: TabProps) {
                   </span>
                 </label>
               )}
+              {sizing === 'fit' && (
+                <Field label="Human pixels" hint={result ? 'Calculated from the area and the spacing' : 'Calculated when you generate'}>
+                  <Input disabled value={result ? result.points.length.toLocaleString() : ''} placeholder="—" />
+                </Field>
+              )}
               {sizing === 'count' && (
                 <Field label="Human pixels"><Input type="number" min={1} max={250000} value={count} onChange={(e) => setCount(Math.min(250000, Math.max(1, Number(e.target.value))))} /></Field>
               )}
@@ -308,7 +313,12 @@ export function FormationTab({ event, canEdit }: TabProps) {
                 )}
               </Field>
               <Field label="Min. spacing (m)" hint="Crowd safety floor"><Input type="number" min={0.6} max={5} step={0.05} value={minSpacing} onChange={(e) => setMinSpacing(Number(e.target.value))} /></Field>
-              <Field label="People per zone"><Input type="number" min={100} max={20000} step={100} value={zoneSize} onChange={(e) => setZoneSize(Number(e.target.value))} /></Field>
+              <Field
+                label="People per zone"
+                hint={`Marshalling only: splits the crowd into zones A, B, C… It never changes the number of pixels.${result ? ` Now ${result.zones.length} zone${result.zones.length > 1 ? 's' : ''}.` : ''}`}
+              >
+                <Input type="number" min={100} max={20000} step={100} value={zoneSize} onChange={(e) => setZoneSize(Number(e.target.value))} />
+              </Field>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>Anchor {anchor ? `${anchor.lat.toFixed(6)}, ${anchor.lng.toFixed(6)}` : 'not set'}</span>
