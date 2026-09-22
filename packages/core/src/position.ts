@@ -124,6 +124,8 @@ export interface TrackerSnapshot {
   arrived: boolean;
   /** Timestamp (device ms) since which inPosition has been continuously true. */
   inPositionSince: number | null;
+  /** Debounced: confidently outside the tolerance zone for exitDwellMs (never true on no/poor fix). */
+  outside: boolean;
   gpsLost: boolean;
 }
 
@@ -138,6 +140,8 @@ export class PositionTracker {
   private inPositionSince: number | null = null;
   private candidateSince: number | null = null;
   private exitSince: number | null = null;
+  private outsideSince: number | null = null;
+  private outside = false;
   private arrived = false;
   private lastFixAt: number | null = null;
   private last: PositionEvaluation = evaluatePosition(null, { lat: 0, lng: 0, radius: 1, requiredAccuracy: 1 });
@@ -153,6 +157,8 @@ export class PositionTracker {
     this.inPositionSince = null;
     this.candidateSince = null;
     this.exitSince = null;
+    this.outsideSince = null;
+    this.outside = false;
     this.arrived = false;
   }
 
@@ -164,6 +170,17 @@ export class PositionTracker {
     const t = raw.timestamp;
 
     if (ev.distance <= this.opts.arrivedDistanceM) this.arrived = true;
+
+    // Confident "outside": far enough that even the accuracy circle does not reach the zone.
+    const clearlyOutsideNow =
+      ev.distance > this.target.radius * this.opts.exitMargin && ev.distance - ev.accuracy > this.target.radius;
+    if (clearlyOutsideNow) {
+      this.outsideSince ??= t;
+      if (t - this.outsideSince >= this.opts.exitDwellMs) this.outside = true;
+    } else {
+      this.outsideSince = null;
+      this.outside = false;
+    }
 
     if (!this.inPosition) {
       if (ev.inside) {
@@ -202,6 +219,7 @@ export class PositionTracker {
       inPosition: this.inPosition,
       arrived: this.arrived,
       inPositionSince: this.inPositionSince,
+      outside: !gpsLost && this.outside,
       gpsLost,
     };
   }

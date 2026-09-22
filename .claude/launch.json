@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "console", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "-w", "@human-pixel/console"], "port": 5174 },
+    { "name": "participant", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "-w", "@human-pixel/participant"], "port": 5173 }
+  ]
+}

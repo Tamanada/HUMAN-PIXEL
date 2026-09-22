@@ -61,6 +61,17 @@ describe('StatusOutbox (offline sync)', () => {
     });
     expect(ob.current?.state).toBe('IN_POSITION');
   });
+
+  it('never reports LEFT_POSITION on GPS loss, poor accuracy or an app restart', () => {
+    const ctx = { insidePerimeter: true, now: 100_000, startsAt: 1_000_000, readyTapped: false };
+    const snap = (p: Partial<TrackerSnapshot>): TrackerSnapshot => ({
+      evaluation: { distance: 1, bearing: 0, accuracy: 3, quality: 'good', status: 'IN_POSITION', inside: true },
+      inPosition: false, arrived: true, inPositionSince: null, outside: false, gpsLost: false, ...p,
+    });
+    expect(deriveParticipantState('READY', { ...ctx, tracker: null })).toBe('READY');
+    expect(deriveParticipantState('READY', { ...ctx, tracker: snap({ inPosition: false, gpsLost: true }) })).toBe('READY');
+    expect(deriveParticipantState('IN_POSITION', { ...ctx, tracker: snap({ inPosition: false, outside: false }) })).toBe('IN_POSITION');
+  });
 });
 
 describe('deriveParticipantState', () => {
@@ -69,6 +80,7 @@ describe('deriveParticipantState', () => {
     inPosition: false,
     arrived: false,
     inPositionSince: null,
+    outside: false,
     gpsLost: false,
     ...p,
   });
@@ -80,8 +92,14 @@ describe('deriveParticipantState', () => {
     expect(deriveParticipantState('ARRIVED', { ...ctx, tracker: snap({ arrived: true, inPosition: true, inPositionSince: 99_000 }) })).toBe('IN_POSITION');
     expect(deriveParticipantState('IN_POSITION', { ...ctx, tracker: snap({ inPosition: true, inPositionSince: 30_000 }) })).toBe('READY');
     expect(deriveParticipantState('IN_POSITION', { ...ctx, readyTapped: true, tracker: snap({ inPosition: true, inPositionSince: 99_000 }) })).toBe('READY');
-    expect(deriveParticipantState('READY', { ...ctx, tracker: snap({ inPosition: false }) })).toBe('LEFT_POSITION');
+    expect(deriveParticipantState('READY', { ...ctx, tracker: snap({ inPosition: false, outside: true }) })).toBe('LEFT_POSITION');
     expect(deriveParticipantState('LEFT_POSITION', { ...ctx, tracker: snap({ inPosition: true, inPositionSince: 99_500 }) })).toBe('IN_POSITION');
     expect(deriveParticipantState('READY', { ...ctx, now: 1_000_000 + 130_000, tracker: snap({ inPosition: true }) })).toBe('COMPLETED');
+  });
+
+  it('never reports LEFT_POSITION on GPS loss, poor accuracy or an app restart', () => {
+    expect(deriveParticipantState('READY', { ...ctx, tracker: null })).toBe('READY');
+    expect(deriveParticipantState('READY', { ...ctx, tracker: snap({ inPosition: false, gpsLost: true }) })).toBe('READY');
+    expect(deriveParticipantState('IN_POSITION', { ...ctx, tracker: snap({ inPosition: false, outside: false }) })).toBe('IN_POSITION');
   });
 });

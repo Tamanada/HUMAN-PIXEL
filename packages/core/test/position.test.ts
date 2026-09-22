@@ -54,6 +54,14 @@ describe('PositionTracker hysteresis', () => {
     // Being clearly outside for more than 8 s does.
     for (let t = 5000; t <= 16000; t += 1000) s = tr.update(at(12, 0, 4, t, 1.5));
     expect(s.inPosition).toBe(false);
+    expect(s.outside).toBe(true);
+  });
+
+  it('poor accuracy is never "outside"', () => {
+    const tr = new PositionTracker(T);
+    let s = tr.update(at(6, 0, 30, 0));
+    for (let t = 1000; t <= 20000; t += 1000) s = tr.update(at(6, 0, 30, t));
+    expect(s.outside).toBe(false);
   });
 
   it('marks arrival within 25 m and GPS loss after 15 s silence', () => {

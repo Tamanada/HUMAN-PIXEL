@@ -37,21 +37,23 @@ export function useEngine(eventId: string, initial?: AssignmentBundle): { engine
   return { engine, snap };
 }
 
-/** Frame-accurate server time for countdowns (requestAnimationFrame, ~no battery cost). */
-export function useServerNow(engine: ParticipantEngine, hz = 10): number {
+/**
+ * Server time for countdowns. Timers are aligned to the exact server-second boundary, so "3, 2, 1"
+ * flips within a few ms of the true second on every phone (not "up to 1/hz late"), and unlike
+ * requestAnimationFrame they keep running when the page is not painting.
+ */
+export function useServerNow(engine: ParticipantEngine, hz = 4): number {
   const [now, setNow] = useState(() => engine.now());
-  const last = useRef(0);
+  const timer = useRef<number | undefined>(undefined);
   useEffect(() => {
-    let raf = 0;
-    const loop = (t: number) => {
-      if (t - last.current >= 1000 / hz) {
-        last.current = t;
-        setNow(engine.now());
-      }
-      raf = requestAnimationFrame(loop);
+    const tick = () => {
+      const n = engine.now();
+      setNow(n);
+      const toNextSecond = 1000 - (((n % 1000) + 1000) % 1000) + 2;
+      timer.current = window.setTimeout(tick, Math.min(toNextSecond, 1000 / hz));
     };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+    tick();
+    return () => window.clearTimeout(timer.current);
   }, [engine, hz]);
   return now;
 }

@@ -42,6 +42,7 @@ export interface AreaRow {
   geom: GeoJSON.Geometry;
   safety_buffer_m: number;
   is_public: boolean;
+  area_m2?: number | null;
 }
 
 export interface FormationRow {

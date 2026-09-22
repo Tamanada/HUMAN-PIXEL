@@ -24,7 +24,9 @@ describe('security: the formation stays secret', () => {
   let bob: Actor;
   beforeAll(async () => {
     s = await buildScenario(pool, 1_000);
-    [alice, bob] = await createUsers(pool, 2, 'sec');
+    const users = await createUsers(pool, 2, 'sec');
+    alice = users[0]!;
+    bob = users[1]!;
     await rpc(pool, alice!, 'join_event', [s.joinCode, CONSENT]);
     await rpc(pool, bob!, 'join_event', [s.joinCode, CONSENT]);
   });

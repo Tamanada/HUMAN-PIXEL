@@ -4,7 +4,8 @@
     "jsx": "react-jsx",
     "noEmit": true,
     "types": [
-      "vite/client"
+      "vite/client",
+      "geojson"
     ]
   },
   "include": [

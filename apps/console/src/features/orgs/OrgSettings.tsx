@@ -47,7 +47,7 @@ export function OrgSettings() {
 
   if (org.isLoading) return <Spinner />;
   if (org.error) return <Alert tone="bad">{(org.error as Error).message}</Alert>;
-  const o = org.data as { name: string; slug: string; status: string; contact_email: string | null };
+  const o = org.data as unknown as { name: string; slug: string; status: string; contact_email: string | null };
   const s = sub.data as { plan: string; max_participants_per_event: number; max_active_events: number; status: string } | null;
 
   return (

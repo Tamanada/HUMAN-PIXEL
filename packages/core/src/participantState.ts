@@ -47,10 +47,12 @@ export function deriveParticipantState(prev: ParticipantState, ctx: ParticipantC
     if (prev === 'READY' || ctx.readyTapped || heldFor >= autoReady) return 'READY';
     return 'IN_POSITION';
   }
-  // Was positioned and the (debounced) tracker says we are out.
-  if (prev === 'IN_POSITION' || prev === 'READY' || prev === 'LEFT_POSITION') {
-    return 'LEFT_POSITION';
+  // Was positioned: only a debounced, confident "outside" counts as leaving. No fix, poor
+  // accuracy or an app restart (tracker still re-acquiring) keeps the last known state.
+  if (prev === 'IN_POSITION' || prev === 'READY') {
+    return t?.outside ? 'LEFT_POSITION' : prev;
   }
+  if (prev === 'LEFT_POSITION') return 'LEFT_POSITION';
   if (t?.arrived || prev === 'ARRIVED') return 'ARRIVED';
   if (ctx.insidePerimeter || prev === 'CHECKED_IN') return 'CHECKED_IN';
   return 'JOINED';
