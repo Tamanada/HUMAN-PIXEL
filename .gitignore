@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dev-dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+supabase/.branches/
+supabase/.temp/
+apps/participant/android/app/build/
+apps/participant/ios/App/Pods/
+*.tsbuildinfo
+.netlify/

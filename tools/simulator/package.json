@@ -1,0 +1,20 @@
+{
+  "name": "@human-pixel/simulator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:db": "vitest run --config vitest.config.ts",
+    "load": "tsx src/load.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@human-pixel/core": "*",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@human-pixel/console",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4174",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.1.1",
+    "@fontsource-variable/space-grotesk": "^5.1.1",
+    "@fontsource/anton": "^5.1.1",
+    "@fontsource/archivo-black": "^5.1.1",
+    "@fontsource/jetbrains-mono": "^5.1.1",
+    "@human-pixel/core": "*",
+    "@sentry/react": "^10.75.1",
+    "@supabase/supabase-js": "^2.116.0",
+    "@tanstack/react-query": "^5.103.2",
+    "lucide-react": "^1.47.0",
+    "maplibre-gl": "^6.10.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^8.3.0"
+  }
+}

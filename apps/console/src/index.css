@@ -1,0 +1,120 @@
+@import 'tailwindcss';
+@import 'maplibre-gl/dist/maplibre-gl.css';
+@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/inter';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/700.css';
+/* Formation fonts (rendered into the design mask on canvas) */
+@import '@fontsource/anton';
+@import '@fontsource/archivo-black';
+
+/* HUMAN PIXEL console: "mission control". Dark default, light available. */
+:root {
+  --hp-bg: #07070b;
+  --hp-surface: #0e0e15;
+  --hp-surface-2: #161620;
+  --hp-line: #252532;
+  --hp-text: #f3f1ec;
+  --hp-muted: #8f8fa0;
+  --hp-pixel: #8c7cff;
+  --hp-pixel-2: #4fe3ff;
+  --hp-on-pixel: #07060f;
+  --hp-ok: #2be38f;
+  --hp-warn: #ffb23f;
+  --hp-bad: #ff4d5e;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --hp-bg: #f6f6f8;
+    --hp-surface: #ffffff;
+    --hp-surface-2: #eeeef3;
+    --hp-line: #dcdce4;
+    --hp-text: #0b0b12;
+    --hp-muted: #5c5c6b;
+    --hp-pixel: #5540ff;
+    --hp-pixel-2: #007fa3;
+    --hp-on-pixel: #ffffff;
+    --hp-ok: #00874f;
+    --hp-warn: #a85a00;
+    --hp-bad: #c8102e;
+    color-scheme: light;
+  }
+}
+:root[data-theme='light'] {
+  --hp-bg: #f6f6f8;
+  --hp-surface: #ffffff;
+  --hp-surface-2: #eeeef3;
+  --hp-line: #dcdce4;
+  --hp-text: #0b0b12;
+  --hp-muted: #5c5c6b;
+  --hp-pixel: #5540ff;
+  --hp-pixel-2: #007fa3;
+  --hp-on-pixel: #ffffff;
+  --hp-ok: #00874f;
+  --hp-warn: #a85a00;
+  --hp-bad: #c8102e;
+  color-scheme: light;
+}
+
+@theme {
+  --color-bg: var(--hp-bg);
+  --color-surface: var(--hp-surface);
+  --color-surface-2: var(--hp-surface-2);
+  --color-line: var(--hp-line);
+  --color-text: var(--hp-text);
+  --color-muted: var(--hp-muted);
+  --color-pixel: var(--hp-pixel);
+  --color-pixel-2: var(--hp-pixel-2);
+  --color-on-pixel: var(--hp-on-pixel);
+  --color-ok: var(--hp-ok);
+  --color-warn: var(--hp-warn);
+  --color-bad: var(--hp-bad);
+  --font-display: 'Space Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--hp-bg);
+  color: var(--hp-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.hp-display {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.hp-digits {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes hp-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.hp-pulse {
+  animation: hp-pulse 1.6s ease-in-out infinite;
+}
+
+:focus-visible {
+  outline: 2px solid var(--hp-pixel);
+  outline-offset: 2px;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+}
