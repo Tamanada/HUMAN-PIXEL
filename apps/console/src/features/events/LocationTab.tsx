@@ -244,16 +244,24 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
         </Field>
         {area.kind === 'access_point' && canEdit && (
           <div className="flex flex-wrap gap-1.5">
-            {POINT_SYMBOLS.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => (setName(p.label), setSymbol(p.id))}
-                className={`rounded-full border px-2.5 py-1 text-xs ${symbol === p.id ? 'border-pixel bg-pixel/10 text-pixel' : 'border-line text-muted hover:border-muted hover:text-text'}`}
-              >
-                {p.label}
-              </button>
-            ))}
+            {POINT_SYMBOLS.map((p) => {
+              const Icon = p.icon;
+              const on = symbol === p.id;
+              // Each pill in its own ISO safety colour, with its pictogram; the chosen one gets a ring.
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  title={p.norm}
+                  onClick={() => (setName(p.label), setSymbol(p.id))}
+                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${on ? '' : 'opacity-75 hover:opacity-100'}`}
+                  style={{ background: p.color, borderColor: p.color, color: p.ink, boxShadow: on ? '0 0 0 2px var(--hp-surface), 0 0 0 4px var(--hp-text)' : undefined }}
+                >
+                  <Icon size={13} strokeWidth={2.6} />
+                  {p.label}
+                </button>
+              );
+            })}
           </div>
         )}
         {bufferMatters && (
