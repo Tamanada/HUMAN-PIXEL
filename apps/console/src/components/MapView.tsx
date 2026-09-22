@@ -134,6 +134,22 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'selected'], 3.5, 2], 'line-dasharray': ['case', ['==', ['get', 'kind'], 'formation_area'], ['literal', [2, 2]], ['literal', [1, 0]]] },
       });
       m.addLayer({ id: 'areas-point', type: 'circle', source: 'areas', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 7, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#000', 'circle-stroke-width': 1.5 } });
+      // Names next to points (Medical point, Entrance…) and inside named zones.
+      m.addLayer({
+        id: 'areas-label',
+        type: 'symbol',
+        source: 'areas',
+        filter: ['!=', ['get', 'name'], ''],
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': 12,
+          'text-offset': ['case', ['==', ['geometry-type'], 'Point'], ['literal', [0, 1.3]], ['literal', [0, 0]]],
+          'text-anchor': ['case', ['==', ['geometry-type'], 'Point'], 'top', 'center'],
+          'text-allow-overlap': false,
+        },
+        paint: { 'text-color': '#fff', 'text-halo-color': '#000', 'text-halo-width': 1.5 },
+      });
       m.addSource('points', { type: 'geojson', data: EMPTY });
       m.addLayer({
         id: 'points',
@@ -192,7 +208,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         type: 'Feature',
         id: a.id,
         geometry: a.geom,
-        properties: { id: a.id, kind: a.kind, color: AREA_STYLE[a.kind].color, fill: AREA_STYLE[a.kind].fill, selected: a.id === selectedAreaId },
+        properties: { id: a.id, kind: a.kind, name: a.name ?? '', color: AREA_STYLE[a.kind].color, fill: AREA_STYLE[a.kind].fill, selected: a.id === selectedAreaId },
       })),
     };
     (m.getSource('areas') as GeoJSONSource).setData(fc);

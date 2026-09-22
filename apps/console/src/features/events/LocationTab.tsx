@@ -28,6 +28,8 @@ export function LocationTab({ event, canEdit }: TabProps) {
   const [tool, setTool] = useState<(typeof TOOLS)[number] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Just created: its editor opens at the top with the name field focused.
+  const [justCreated, setJustCreated] = useState<string | null>(null);
   const [placingCenter, setPlacingCenter] = useState(false);
   const locked = !!event.active_formation_id;
   const frozenKinds = new Set(['perimeter', 'formation_area', 'exclusion', 'no_go', 'emergency']);
@@ -46,8 +48,9 @@ export function LocationTab({ event, canEdit }: TabProps) {
         p_is_public: a.isPublic ?? null,
         p_area_id: a.id ?? null,
       }),
-    onSuccess: (id) => {
+    onSuccess: (id, vars) => {
       setSelected(id);
+      if (!vars.id) setJustCreated(id);
       invalidate();
     },
   });
@@ -122,9 +125,10 @@ export function LocationTab({ event, canEdit }: TabProps) {
           bearingKey={event.id}
         />
         </div>
-        {placingCenter && <Alert>Click the map to set the event center (used as the default formation anchor).</Alert>}
+        {placingCenter && <Alert>Click the map to set the event center (where the map opens when nothing is drawn yet).</Alert>}
       </div>
       <div className="space-y-4">
+        {sel && <AreaEditor key={sel.id} area={sel} autoFocusName={justCreated === sel.id} onClose={() => (setSelected(null), setJustCreated(null))} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
         <SurfaceCard areas={areas.data ?? []} eventId={event.id} />
         {locked && <Alert tone="warn">A formation is locked: perimeter, formation area, exclusions, no-go and emergency zones are frozen. Access, assembly and entry areas can still change.</Alert>}
         {canEdit && (
@@ -168,7 +172,6 @@ export function LocationTab({ event, canEdit }: TabProps) {
             ))}
           </ul>
         </Card>
-        {sel && <AreaEditor key={sel.id} area={sel} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
       </div>
     </div>
   );
@@ -202,15 +205,44 @@ function SurfaceCard({ areas, eventId }: { areas: AreaRow[]; eventId: string }) 
   );
 }
 
-function AreaEditor({ area, canEdit, editing, onEditShape, onSave, onDelete, busy }: { area: AreaRow; canEdit: boolean; editing: boolean; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean }) => void; onDelete: () => void; busy: boolean }) {
+const POINT_PRESETS = ['Entrance', 'Exit', 'Medical point', 'First aid', 'Staff', 'Info desk', 'Water', 'Toilets', 'Lost & found', 'Security', 'Drone team'];
+
+function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShape, onSave, onDelete, busy }: { area: AreaRow; canEdit: boolean; editing: boolean; autoFocusName: boolean; onClose: () => void; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean }) => void; onDelete: () => void; busy: boolean }) {
   const [name, setName] = useState(area.name ?? '');
   const [buffer, setBuffer] = useState(area.safety_buffer_m);
   const [pub, setPub] = useState(area.is_public);
   const bufferMatters = ['exclusion', 'no_go', 'emergency'].includes(area.kind);
   return (
-    <Card title={<span className="flex items-center gap-2">{AREA_STYLE[area.kind].label} {!area.is_public && <Badge>private</Badge>}</span>}>
+    <Card
+      title={<span className="flex items-center gap-2">{AREA_STYLE[area.kind].label} {!area.is_public && <Badge>private</Badge>}</span>}
+      actions={<button onClick={onClose} className="text-xs text-muted hover:text-text">Close</button>}
+    >
       <div className="space-y-3">
-        <Field label="Name"><Input value={name} disabled={!canEdit} onChange={(e) => setName(e.target.value)} /></Field>
+        <Field label="Name" hint={area.kind === 'access_point' ? 'Shown on the map and to participants (if public).' : undefined}>
+          <Input
+            value={name}
+            disabled={!canEdit}
+            autoFocus={autoFocusName}
+            placeholder={area.kind === 'access_point' ? 'e.g. Medical point' : AREA_STYLE[area.kind].label}
+            maxLength={80}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && canEdit && onSave({ name: name.trim() || null, buffer, isPublic: pub })}
+          />
+        </Field>
+        {area.kind === 'access_point' && canEdit && (
+          <div className="flex flex-wrap gap-1.5">
+            {POINT_PRESETS.map((label) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setName(label)}
+                className={`rounded-full border px-2.5 py-1 text-xs ${name === label ? 'border-pixel bg-pixel/10 text-pixel' : 'border-line text-muted hover:border-muted hover:text-text'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {bufferMatters && (
           <Field label="Safety buffer (m)" hint="Pixels are kept at least this far from the zone.">
             <Input type="number" min={0} max={200} step={0.5} value={buffer} disabled={!canEdit} onChange={(e) => setBuffer(Number(e.target.value))} />
@@ -225,7 +257,7 @@ function AreaEditor({ area, canEdit, editing, onEditShape, onSave, onDelete, bus
         {canEdit && (
           <div className="flex justify-between gap-2 pt-2">
             <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={onDelete} disabled={busy}>Delete</Button>
-            <Button variant="primary" size="sm" busy={busy} onClick={() => onSave({ name: name || null, buffer, isPublic: pub })}>Save</Button>
+            <Button variant="primary" size="sm" busy={busy} onClick={() => onSave({ name: name.trim() || null, buffer, isPublic: pub })}>Save</Button>
           </div>
         )}
       </div>

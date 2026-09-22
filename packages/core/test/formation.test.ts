@@ -4,6 +4,7 @@ import {
   LocalFrame,
   createMask,
   fillEllipse,
+  deepestPoint,
   fitDesignWidth,
   generateFormation,
   hexPeople,
@@ -241,5 +242,19 @@ describe('sizing from the surface (capacity is an output)', () => {
     expect(r.points.length).toBeLessThan(hexPeople(area, 1.5) * 1.1);
     expect(r.metrics.clippedFraction).toBeLessThan(0.01);
     assertInvariants(r, r.points.length, 0.9);
+  });
+
+  it('deepest point of a curved (concave) beach lies inside, away from the shore', () => {
+    // A crescent: its corner average falls in the bay, outside the sand.
+    const arc = (r: number, a: number) => frame.toLatLng({ x: r * Math.cos(a), y: r * Math.sin(a) });
+    const outer: LatLng[] = [];
+    for (let i = 0; i <= 20; i++) outer.push(arc(200, Math.PI * (0.1 + 0.8 * (i / 20))));
+    for (let i = 20; i >= 0; i--) outer.push(arc(150, Math.PI * (0.1 + 0.8 * (i / 20))));
+    const crescent: Polygon<LatLng> = { outer };
+    const p = frame.toLocal(deepestPoint(crescent));
+    const local = polygonToLocal(frame, crescent);
+    expect(pointInPolygon(p, local)).toBe(true);
+    // Depth ≈ half the 50 m band.
+    expect(Math.abs(Math.hypot(p.x, p.y) - 175)).toBeLessThan(5);
   });
 });

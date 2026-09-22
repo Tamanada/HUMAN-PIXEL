@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Dices, Lock, Sparkles, Upload, Wand2 } from 'lucide-react';
-import { formationEditable, randomSeed, type FormationResult, type FormationStage, type Mask } from '@human-pixel/core';
+import { Dices, Lock, RotateCcw, Sparkles, Upload, Wand2 } from 'lucide-react';
+import { deepestPoint, formationEditable, geoJsonPolygonToLatLng, randomSeed, type FormationResult, type FormationStage, type Mask } from '@human-pixel/core';
 import { ensureFontLoaded, maskToRgba, renderImageMask, renderTextMask } from '@human-pixel/core/formation-browser';
 import { Alert, Badge, Button, Card, Field, Input, Modal, Select, Stat, Textarea } from '../../components/ui';
 import { MapView, readBearing, type PointsLayer } from '../../components/MapView';
@@ -84,7 +84,9 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [minSpacing, setMinSpacing] = useState(0.9);
   const [zoneSize, setZoneSize] = useState(1500);
   const [seed, setSeed] = useState(() => randomSeed());
-  const [anchor, setAnchor] = useState<{ lat: number; lng: number } | null>(event.center_lat != null ? { lat: event.center_lat, lng: event.center_lng! } : null);
+  // Default anchor: the point deepest inside the formation area (else the perimeter), where a
+  // centred design has the most room. The event centre is only a fallback without any area.
+  const [anchor, setAnchor] = useState<{ lat: number; lng: number } | null>(null);
   const [placingAnchor, setPlacingAnchor] = useState(false);
   const autoWidth = mask && sizing === 'count' ? suggestWidth(mask, count, targetSpacing) : 0;
   const width = widthOverride ?? Math.round(autoWidth);
@@ -92,12 +94,28 @@ export function FormationTab({ event, canEdit }: TabProps) {
 
   useEffect(() => {
     if (anchor || !areas.data) return;
-    const fa = areas.data.find((a) => a.kind === 'formation_area') ?? areas.data.find((a) => a.kind === 'perimeter');
-    if (fa && fa.geom.type === 'Polygon') {
-      const ring = fa.geom.coordinates[0]!.slice(0, -1);
-      setAnchor({ lng: ring.reduce((s, c) => s + c[0]!, 0) / ring.length, lat: ring.reduce((s, c) => s + c[1]!, 0) / ring.length });
-    }
+    setAnchor(defaultAnchor());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [areas.data, anchor]);
+
+  function defaultAnchor(): { lat: number; lng: number } | null {
+    const fa = areas.data?.find((a) => a.kind === 'formation_area') ?? areas.data?.find((a) => a.kind === 'perimeter');
+    if (fa && fa.geom.type === 'Polygon') return deepestPoint(geoJsonPolygonToLatLng(fa.geom as never));
+    return event.center_lat != null ? { lat: event.center_lat, lng: event.center_lng! } : null;
+  }
+
+  /** Placement back to the recommended values (the design itself is kept). */
+  const resetPlacement = () => {
+    setSizing(event.capacity == null ? 'fit' : 'count');
+    setCount(event.capacity ?? 5000);
+    setTargetSpacing(1.3);
+    setWidthOverride(null);
+    setRotation(alignedRotation);
+    setMinSpacing(0.9);
+    setZoneSize(1500);
+    setAnchor(defaultAnchor());
+    setPlacingAnchor(false);
+  };
 
   // ---- generation ----------------------------------------------------------------------------
   const [result, setResult] = useState<FormationResult | null>(null);
@@ -227,7 +245,10 @@ export function FormationTab({ event, canEdit }: TabProps) {
             {maskError && <Alert tone="bad">{maskError}</Alert>}
           </Card>
 
-          <Card title="2 · Placement">
+          <Card
+            title="2 · Placement"
+            actions={<Button size="sm" variant="ghost" icon={<RotateCcw size={14} />} onClick={resetPlacement} title="Spacing 1.3 m, min 0.9 m, 1,500 per zone, aligned with the map, anchor at the heart of the area">Reset to defaults</Button>}
+          >
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 grid grid-cols-2 gap-1 rounded-lg bg-bg p-1">
                 {([['fit', 'Fill the surface'], ['count', 'I know my head count']] as const).map(([k, label]) => (
