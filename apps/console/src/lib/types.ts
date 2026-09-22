@@ -93,5 +93,8 @@ export interface MemberRow {
   status: 'registered' | 'waitlisted' | 'cancelled' | 'removed';
   joined_at: string;
   group_id: string | null;
+  public_listing: boolean;
+  public_name: string | null;
+  public_nationality: string | null;
   participant_status: { state: ParticipantState; reported_at: string | null; accuracy_m: number | null; report_count: number } | null;
 }

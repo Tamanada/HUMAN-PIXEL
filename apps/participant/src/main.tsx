@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { registerSW } from 'virtual:pwa-register';
 import './index.css';
+import { installFlagFont } from './lib/flags';
 import { Home } from './screens/Home';
 import { Join } from './screens/Join';
 import { EventScreen } from './screens/EventScreen';
@@ -11,6 +12,7 @@ import { readJson } from './lib/storage';
 
 const PhotoScreen = lazy(() => import('./screens/PhotoScreen').then((m) => ({ default: m.PhotoScreen })));
 const Account = lazy(() => import('./screens/Account').then((m) => ({ default: m.Account })));
+const HallOfFame = lazy(() => import('./screens/HallOfFame').then((m) => ({ default: m.HallOfFame })));
 const Privacy = lazy(() => import('./screens/Privacy').then((m) => ({ default: m.Privacy })));
 
 document.documentElement.dataset.sun = readJson<boolean>('sun') ? 'on' : 'off';
@@ -35,6 +37,8 @@ if (config.sentryDsn) {
     .catch(() => {});
 }
 
+installFlagFont();
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
@@ -46,6 +50,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/e/:eventId/photo" element={<PhotoScreen />} />
           <Route path="/account" element={<Account />} />
           <Route path="/privacy" element={<Privacy />} />
+          <Route path="/hall/:eventId" element={<HallOfFame />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>

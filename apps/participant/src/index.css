@@ -53,7 +53,7 @@
   --color-warn: var(--hp-warn);
   --color-bad: var(--hp-bad);
   --font-display: 'Space Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Twemoji Country Flags', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 }
 

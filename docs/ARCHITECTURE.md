@@ -109,6 +109,10 @@ Core tables (see `supabase/migrations`):
 - `assignment_log`: append-only evidence of every assign / release / reassign.
 - `event_state_history`, `audit_logs`, `event_stat_snapshots`.
 - `event_photos`, `notifications`, `abuse_reports`, `platform_settings`, `rate_limits`.
+- Identity: `profiles.first_name / birth_year / sex / nationality` (required to join); per-event snapshot on
+  `event_members` for demographics, plus `public_listing / public_name / public_nationality` for the public
+  **Hall of Fame** (`/hall/:eventId`): opt-in per event, anonymous by default, never for under-16s, never
+  with age, sex or position.
 
 **Assignment invariant, enforced by the database:** `formation_points.member_id` is `UNIQUE`,
 so a point has at most one holder and a member holds at most one point (member rows are

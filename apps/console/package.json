@@ -19,6 +19,7 @@
     "@sentry/react": "^10.75.1",
     "@supabase/supabase-js": "^2.116.0",
     "@tanstack/react-query": "^5.103.2",
+    "country-flag-emoji-polyfill": "^0.1.10",
     "lucide-react": "^1.47.0",
     "maplibre-gl": "^6.10.0",
     "qrcode": "^1.5.4",

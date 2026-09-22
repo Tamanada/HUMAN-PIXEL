@@ -406,3 +406,46 @@ describe('photos', () => {
     expect(card.pixel_label).toBeGreaterThan(0);
   });
 });
+
+describe('participant identity & Hall of Fame', () => {
+  it('requires a profile, keeps people anonymous by default, and exposes only first name + nationality', async () => {
+    const s = await buildScenario(pool, 50);
+    const [noProfile, alice, bob, teen] = await createUsers(pool, 4, 'identity');
+    await pool.query(`update public.profiles set first_name = null where id = $1`, [noProfile!.id]);
+    await expectError(rpc(pool, noProfile!, 'join_event', [s.joinCode, CONSENT]), /PROFILE_REQUIRED/);
+
+    await rpc(pool, alice!, 'save_my_profile', ['Alice', 29, 'female', 'fr']);
+    await rpc(pool, bob!, 'save_my_profile', ['Bob', 41, 'male', 'TH']);
+    await rpc(pool, teen!, 'save_my_profile', ['Tom', 14, 'male', 'GB']);
+    await expectError(rpc(pool, alice!, 'save_my_profile', ['<script>', 29, 'female', 'FR']), /INVALID_FIRST_NAME/);
+
+    await rpc(pool, alice!, 'join_event', [s.joinCode, CONSENT, null, null, true]); // opts in
+    await rpc(pool, bob!, 'join_event', [s.joinCode, CONSENT]); // default: anonymous
+    await rpc(pool, teen!, 'join_event', [s.joinCode, CONSENT, null, null, true]); // under 16: ignored
+    await expectError(rpc(pool, teen!, 'set_my_listing', [s.eventId, true]), /TOO_YOUNG/);
+
+    const hof = await rpc<any>(pool, null, 'get_hall_of_fame', [s.eventId, 100, 0, null]);
+    expect(hof.people).toEqual([{ name: 'Alice', nationality: 'FR' }]);
+    expect(hof.listed).toBe(1);
+    for (const person of hof.people) expect(Object.keys(person).sort()).toEqual(['name', 'nationality']);
+    expect(JSON.stringify(hof)).not.toMatch(/"(age|birth_year|sex|lat|lng|label|participant_number)"|female/);
+
+    // Bob changes his mind; Alice withdraws.
+    await rpc(pool, bob!, 'set_my_listing', [s.eventId, true]);
+    await rpc(pool, alice!, 'set_my_listing', [s.eventId, false]);
+    const hof2 = await rpc<any>(pool, null, 'get_hall_of_fame', [s.eventId, 100, 0, null]);
+    expect(hof2.people).toEqual([{ name: 'Bob', nationality: 'TH' }]);
+
+    // Age and sex are never readable per person, not even by the organizer.
+    await expectError(asUser(pool, s.organizer, (c) => c.query('select birth_year, sex from public.event_members')), /permission denied/);
+    const demo = await rpc<any>(pool, s.organizer, 'get_event_demographics', [s.eventId]);
+    expect(demo.total).toBe(3);
+    expect(demo.countries).toBe(3);
+    await expectError(rpc(pool, alice!, 'get_event_demographics', [s.eventId]), /FORBIDDEN/);
+
+    // Account deletion withdraws the public entry.
+    await rpc(pool, bob!, 'prepare_account_deletion', []);
+    const hof3 = await rpc<any>(pool, null, 'get_hall_of_fame', [s.eventId, 100, 0, null]);
+    expect(hof3.people).toEqual([]);
+  });
+});

@@ -12,3 +12,4 @@ export * from './formation/random';
 export * from './formation/grid';
 export * from './formation/protocol';
 export * from './simulation';
+export * from './countries';

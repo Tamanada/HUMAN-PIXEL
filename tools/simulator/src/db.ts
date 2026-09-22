@@ -71,6 +71,11 @@ export async function createUsers(pool: pg.Pool, n: number, prefix: string): Pro
        from jsonb_array_elements($1::jsonb) u`,
       [JSON.stringify(part)],
     );
+    await pool.query(
+      `update public.profiles p set first_name = 'Pixel', birth_year = 1995, sex = 'undisclosed', nationality = 'TH'
+       from jsonb_array_elements($1::jsonb) u where p.id = (u->>'id')::uuid`,
+      [JSON.stringify(part)],
+    );
   }
   return users;
 }

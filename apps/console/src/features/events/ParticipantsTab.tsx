@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Users } from 'lucide-react';
+import { countryName, flagEmoji } from '@human-pixel/core';
 import { Alert, Badge, Button, Card, Empty, Field, Input, Modal, Select, Spinner, Table } from '../../components/ui';
 import { must, rpc, supabase } from '../../lib/supabase';
 import { fmtRelative } from '../../lib/time';
@@ -33,7 +34,7 @@ export function ParticipantsTab({ event, canEdit }: TabProps) {
     queryFn: async () => {
       let q = supabase
         .from('event_members')
-        .select('id, participant_number, status, joined_at, group_id, participant_status(state, reported_at, accuracy_m, report_count)', { count: 'exact' })
+        .select('id, participant_number, status, joined_at, group_id, public_listing, public_name, public_nationality, participant_status(state, reported_at, accuracy_m, report_count)', { count: 'exact' })
         .eq('event_id', event.id)
         .order('participant_number')
         .range(page * PAGE, page * PAGE + PAGE - 1);
@@ -88,10 +89,11 @@ export function ParticipantsTab({ event, canEdit }: TabProps) {
             <div className="p-4"><Empty icon={<Users size={24} />} title="No participants here yet">Share the invite link or QR code from the Invite tab.</Empty></div>
           ) : (
             <>
-              <Table head={['#', 'Status', 'Live state', 'GPS', 'Last report', 'Joined', '']}>
+              <Table head={['#', 'Hall of Fame', 'Status', 'Live state', 'GPS', 'Last report', 'Joined', '']}>
                 {members.data!.rows.map((m) => (
                   <tr key={m.id} className="hover:bg-surface-2">
                     <td className="hp-digits px-4 py-2">{m.participant_number}</td>
+                    <td className="px-4 py-2 text-xs">{m.public_listing ? <span title={m.public_nationality ? countryName(m.public_nationality) : undefined}>{flagEmoji(m.public_nationality)} {m.public_name}</span> : <span className="text-muted">anonymous</span>}</td>
                     <td className="px-4 py-2"><Badge tone={m.status === 'registered' ? 'ok' : m.status === 'waitlisted' ? 'warn' : 'neutral'}>{m.status}</Badge></td>
                     <td className="px-4 py-2 text-xs">{m.participant_status?.state ?? '—'}</td>
                     <td className="hp-digits px-4 py-2 text-xs text-muted">{m.participant_status?.accuracy_m != null ? `±${m.participant_status.accuracy_m.toFixed(0)} m` : '—'}</td>
@@ -112,7 +114,10 @@ export function ParticipantsTab({ event, canEdit }: TabProps) {
             </>
           )}
         </Card>
-        <Groups eventId={event.id} canEdit={canEdit} groups={groups.data ?? []} hasFormation={!!event.active_formation_id} />
+        <div className="space-y-6">
+          <Demographics eventId={event.id} />
+          <Groups eventId={event.id} canEdit={canEdit} groups={groups.data ?? []} hasFormation={!!event.active_formation_id} />
+        </div>
       </div>
       <Modal open={!!selected} onClose={() => setSelected(null)} title={`Participant #${selected?.participant_number}`}>
         <div className="space-y-4 text-sm">
@@ -172,5 +177,60 @@ function Groups({ eventId, canEdit, groups, hasFormation }: { eventId: string; c
         {reserve.error && <div className="mt-3"><Alert tone="bad">{(reserve.error as Error).message}</Alert></div>}
       </Modal>
     </Card>
+  );
+}
+
+interface DemographicsData {
+  total: number;
+  listed: number;
+  medianAge: number | null;
+  ageBuckets: Record<string, number | null>;
+  sex: Record<string, number | null>;
+  nationalities: { code: string; count: number }[];
+  countries: number;
+}
+
+const AGE_ORDER = ['<18', '18-24', '25-34', '35-44', '45-54', '55-64', '65+', 'unknown'];
+const SEX_LABEL: Record<string, string> = { female: 'Female', male: 'Male', other: 'Other', undisclosed: 'Not said', unknown: 'Unknown' };
+
+/** Anonymous aggregates only; buckets under 3 people are suppressed by the database. */
+function Demographics({ eventId }: { eventId: string }) {
+  const q = useQuery({ queryKey: ['demographics', eventId], refetchInterval: 60_000, queryFn: () => rpc<DemographicsData>('get_event_demographics', { p_event_id: eventId }) });
+  const d = q.data;
+  if (!d || d.total === 0) return null;
+  const bar = (n: number | null | undefined) => (n == null ? 0 : (100 * n) / d.total);
+  return (
+    <Card title={`Who is coming · ${d.countries} countries`}>
+      <div className="space-y-4 text-sm">
+        <div className="flex justify-between text-xs text-muted">
+          <span>Median age {d.medianAge != null ? Math.round(d.medianAge) : '—'}</span>
+          <span>{d.listed.toLocaleString()} in the Hall of Fame</span>
+        </div>
+        <div className="space-y-1.5">
+          {AGE_ORDER.filter((k) => k in d.ageBuckets).map((k) => (
+            <Row key={k} label={k} value={d.ageBuckets[k] ?? null} pct={bar(d.ageBuckets[k])} />
+          ))}
+        </div>
+        <div className="space-y-1.5 border-t border-line pt-3">
+          {Object.entries(d.sex).map(([k, v]) => <Row key={k} label={SEX_LABEL[k] ?? k} value={v} pct={bar(v)} />)}
+        </div>
+        <div className="flex flex-wrap gap-1.5 border-t border-line pt-3">
+          {d.nationalities.slice(0, 24).map((n) => (
+            <span key={n.code} title={countryName(n.code)} className="rounded-full border border-line px-2 py-0.5 text-xs">{flagEmoji(n.code)} <span className="hp-digits">{n.count}</span></span>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted">Anonymous statistics. Groups under 3 people are hidden.</p>
+      </div>
+    </Card>
+  );
+}
+
+function Row({ label, value, pct }: { label: string; value: number | null; pct: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 shrink-0 text-xs text-muted">{label}</span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line"><div className="h-full bg-pixel" style={{ width: `${pct}%` }} /></div>
+      <span className="hp-digits w-12 text-right text-xs">{value == null ? '<3' : value.toLocaleString()}</span>
+    </div>
   );
 }

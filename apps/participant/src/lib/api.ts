@@ -39,6 +39,11 @@ const FRIENDLY: Record<string, string> = {
   AUTH_REQUIRED: 'Please sign in again.',
   ACCOUNT_SUSPENDED: 'This account is suspended.',
   EVENT_UNAVAILABLE: 'This event is not available.',
+  PROFILE_REQUIRED: 'Please tell us a little about yourself first.',
+  INVALID_FIRST_NAME: 'Please enter your first name using letters only.',
+  INVALID_AGE: 'Please enter a valid age.',
+  INVALID_NATIONALITY: 'Please choose your nationality.',
+  TOO_YOUNG_FOR_PUBLIC_LISTING: 'Participants under 16 stay anonymous in the Hall of Fame.',
 };
 
 function toApiError(e: { message?: string; code?: string } | null, fallback = 'Something went wrong'): ApiError {
@@ -73,8 +78,54 @@ export async function getEventPreview(code: string): Promise<EventPreview | null
   return data ? previewSchema.parse(data) : null;
 }
 
-export function joinEvent(code: string, consentVersion: string, groupCode?: string): Promise<AssignmentBundle> {
-  return call('join_event', { p_code: code, p_consent_version: consentVersion, p_group_code: groupCode || null, p_device_id: deviceId() }, assignmentBundleSchema);
+export function joinEvent(code: string, consentVersion: string, groupCode?: string, publicListing = false): Promise<AssignmentBundle> {
+  return call(
+    'join_event',
+    { p_code: code, p_consent_version: consentVersion, p_group_code: groupCode || null, p_device_id: deviceId(), p_public_listing: publicListing },
+    assignmentBundleSchema,
+  );
+}
+
+// ---- Identity & Hall of Fame ------------------------------------------------------------------
+export const profileSchema = z.object({
+  first_name: z.string().nullable(),
+  age: z.number().nullable(),
+  sex: z.enum(['female', 'male', 'other', 'undisclosed']).nullable(),
+  nationality: z.string().nullable(),
+  complete: z.boolean(),
+});
+export type Profile = z.infer<typeof profileSchema>;
+
+export function getMyProfile(): Promise<Profile> {
+  return call('get_my_profile', {}, profileSchema);
+}
+
+export function saveMyProfile(p: { firstName: string; age: number; sex: string; nationality: string }): Promise<Profile> {
+  return call('save_my_profile', { p_first_name: p.firstName, p_age: p.age, p_sex: p.sex, p_nationality: p.nationality }, profileSchema);
+}
+
+export function getMyListing(eventId: string): Promise<boolean> {
+  return call<boolean>('get_my_listing', { p_event_id: eventId });
+}
+
+export function setMyListing(eventId: string, isPublic: boolean): Promise<boolean> {
+  return call<boolean>('set_my_listing', { p_event_id: eventId, p_public: isPublic });
+}
+
+export const hallSchema = z.object({
+  event: z.object({ id: z.string(), name: z.string(), state: z.string(), startsAt: z.string().nullable(), timezone: z.string(), venueName: z.string().nullable() }),
+  participants: z.number().nullable(),
+  listed: z.number(),
+  countries: z.number(),
+  byNationality: z.array(z.object({ code: z.string(), count: z.number() })),
+  people: z.array(z.object({ name: z.string(), nationality: z.string().nullable() })),
+});
+export type HallOfFame = z.infer<typeof hallSchema>;
+
+export async function getHallOfFame(eventId: string, offset = 0, nationality: string | null = null): Promise<HallOfFame | null> {
+  const { data, error } = await supabase.rpc('get_hall_of_fame', { p_event_id: eventId, p_limit: 200, p_offset: offset, p_nationality: nationality });
+  if (error) throw toApiError(error);
+  return data ? hallSchema.parse(data) : null;
 }
 
 export function getMyAssignment(eventId: string): Promise<AssignmentBundle> {

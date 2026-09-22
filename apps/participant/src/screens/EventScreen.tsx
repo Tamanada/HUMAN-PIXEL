@@ -5,6 +5,7 @@ import { useEngine, useServerNow } from '../engine/useEngine';
 import type { EngineSnapshot, ParticipantEngine } from '../engine/ParticipantEngine';
 import { Banner, Button, Eyebrow, PixelMark, Screen, StatusPill } from '../components/ui';
 import { DirectionArrow, Radar } from '../components/Radar';
+import { ListingToggle } from '../components/ListingToggle';
 import { CountdownClock, FinalCountdown, primeAudio } from '../components/Countdown';
 import { formatClock, formatEventDate, formatEventTime, useSunlight } from '../lib/hooks';
 import { openExternalDirections, requestCompass, requestGeolocation } from '../lib/platform';
@@ -101,6 +102,7 @@ function PhaseView({ engine, snap, now }: { engine: ParticipantEngine; snap: Eng
           The image is being developed. You will see it right here as soon as the organizer releases it.
         </p>
         <PixelCard snap={snap} compact />
+        <ListingToggle eventId={b.event.id} />
       </section>
     );
   }
@@ -123,6 +125,7 @@ function PhaseView({ engine, snap, now }: { engine: ParticipantEngine; snap: Eng
         <Navigation engine={engine} snap={snap} now={now} />
       )}
       {snap.startsAt != null && !snap.tracker?.inPosition && <CountdownClock startsAt={snap.startsAt} now={now} />}
+      {!snap.tracker?.inPosition && <ListingToggle eventId={b.event.id} />}
       <p className="text-center text-xs text-muted">
         {snap.pendingReport ? 'Status will sync when possible' : 'Status synced'} · clock ±{Math.round(snap.clock?.uncertaintyMs ?? 999)} ms
       </p>

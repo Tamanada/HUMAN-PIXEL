@@ -28,6 +28,7 @@
 | Privilege creep from new objects | Default-deny whitelist: all table/function privileges revoked from `anon`/`authenticated` and re-granted explicitly. | `000006_grants.sql` |
 | Internal functions called directly | `hp_*` internals have no EXECUTE grant (tests assert `permission denied`). | grants, DB tests |
 | Photo leakage before release | Private bucket; `storage.objects` policy allows participants only released display/share/thumb files; master never readable by participants. | `000005_operations.sql` |
+| Participant identity (first name, age, sex, nationality) | Written only through validated `save_my_profile`; per-person age/sex/nationality columns have **no client SELECT grant** (organizers get `get_event_demographics` aggregates with buckets < 3 suppressed); the public Hall of Fame (`get_hall_of_fame`) returns only first name + nationality of members who opted in for that event (default anonymous, revocable any time); under-16s can never be listed; account deletion withdraws entries. | `000011`, DB tests |
 | Location data exposure | GPS never leaves the phone; Sentry `beforeSend` drops events containing coordinates; no location columns exist for participants. | participant app |
 | Supply chain / secrets | No secrets in source; `.env*` ignored; service role only in Edge Functions; CSP headers on both sites. | `.gitignore`, `netlify.toml` |
 | Clickjacking / XSS surface | `X-Frame-Options: DENY`, strict CSP (`script-src 'self'`), React escaping, no `dangerouslySetInnerHTML`. | `netlify.toml` |

@@ -18,13 +18,18 @@ export function Privacy() {
           many people are in position.
         </Section>
         <Section title="What we store">
-          Your email address (or nothing, if you joined as a guest), your participation in events, your participant number,
-          the pixel assigned to you, your latest status and a random installation identifier. We do not collect your name,
+          Your first name, age, sex and nationality (asked when you join), your email address (or nothing, if you joined as a guest), your participation in events, your participant number,
+          the pixel assigned to you, your latest status and a random installation identifier. We do not collect your last name,
           phone contacts, photos or advertising identifiers.
         </Section>
         <Section title="Who can see it">
           The event organizer sees counts and statuses for their own event. Other participants never see anything about you,
           including where you stand. Platform administrators can access data only to operate and secure the service.
+        </Section>
+        <Section title="Hall of Fame">
+          For each event you choose whether your first name and nationality flag appear in its public Hall of Fame. You are
+          anonymous by default and can change your choice at any time. Your age and sex are never public: organizers only see
+          anonymous statistics (for example age groups). Participants under 16 always stay anonymous.
         </Section>
         <Section title="How long we keep it">
           After an event ends, your link to the event is removed after the organizer's retention period (90 days by default).

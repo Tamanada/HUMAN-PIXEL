@@ -108,6 +108,7 @@ export function PhotoScreen() {
             </div>
           </div>
           <Button onClick={share} busy={sharing}>Share</Button>
+          <Link to={`/hall/${eventId}`} className="block text-center text-sm text-pixel underline-offset-4 hover:underline">See the Hall of Fame →</Link>
           <p className="whitespace-pre-line text-center text-sm text-muted">{shareText}</p>
           {error && <Banner tone="bad">{error}</Banner>}
         </section>

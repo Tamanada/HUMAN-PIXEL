@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ProfileForm } from '../components/ProfileForm';
+import { getMyProfile, type Profile } from '../lib/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { Banner, Button, Eyebrow, PixelMark, Screen } from '../components/ui';
 import { cancelParticipation } from '../lib/api';
@@ -15,6 +17,10 @@ export function Account() {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: 'info' | 'bad'; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  useEffect(() => {
+    if (session) void getMyProfile().then(setProfile).catch(() => {});
+  }, [session]);
 
   const cancel = async (eventId: string) => {
     if (!window.confirm('Give up your pixel for this event? It will go to someone on the waitlist.')) return;
@@ -59,6 +65,12 @@ export function Account() {
         <p className="text-lg font-semibold">{session ? session.user.email ?? 'Guest (no email)' : 'Not signed in'}</p>
       </section>
       {msg && <Banner tone={msg.tone}>{msg.text}</Banner>}
+      {session && profile && (
+        <section className="space-y-3">
+          <Eyebrow>About you</Eyebrow>
+          <ProfileForm key={profile.first_name ?? 'new'} initial={profile} submitLabel="Save" onSaved={(p) => (setProfile(p), setMsg({ tone: 'info', text: 'Saved. Your Hall of Fame entries are updated.' }))} />
+        </section>
+      )}
       <section className="space-y-3">
         <Eyebrow>Display</Eyebrow>
         <Button variant="ghost" onClick={() => setSun(!sun)}>{sun ? 'Switch to night mode' : 'Switch to sunlight mode (high contrast)'}</Button>

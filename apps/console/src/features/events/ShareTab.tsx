@@ -77,6 +77,13 @@ export function ShareTab({ event, canEdit }: TabProps) {
             <Button variant="primary" icon={<Download size={14} />} onClick={() => void downloadPoster()}>Download poster (A4)</Button>
             {canEdit && <Button variant="danger" icon={<RefreshCw size={14} />} onClick={() => setConfirm(true)}>New code</Button>}
           </div>
+          <p className="text-sm">
+            Public Hall of Fame:{' '}
+            <a className="text-pixel underline-offset-4 hover:underline" href={`${config.participantUrl.replace(/\/$/, '')}/hall/${event.id}`} target="_blank" rel="noreferrer">
+              {config.participantUrl.replace(/\/$/, '')}/hall/{event.id.slice(0, 8)}…
+            </a>{' '}
+            (first names and flags of participants who opted in).
+          </p>
           <p className="text-xs text-muted">Group invites: add <code>?g=GROUPCODE</code> to the link. Participants never need to install anything: the link opens the web app, which also installs as an app.</p>
         </div>
       </Card>

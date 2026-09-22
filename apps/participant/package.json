@@ -28,6 +28,7 @@
     "@human-pixel/core": "*",
     "@sentry/react": "^10.75.1",
     "@supabase/supabase-js": "^2.116.0",
+    "country-flag-emoji-polyfill": "^0.1.10",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4",
