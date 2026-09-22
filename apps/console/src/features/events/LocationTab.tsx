@@ -72,7 +72,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
   });
 
   const draw: DrawMode = useMemo(
-    () => (tool ? { kind: tool.shape, onDone: (geom) => (save.mutate({ kind: tool.kind, geom }), setTool(null)) } : null),
+    () => (tool ? { kind: tool.shape, color: AREA_STYLE[tool.kind].color, onDone: (geom) => (save.mutate({ kind: tool.kind, geom }), setTool(null)) } : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tool],
   );

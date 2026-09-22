@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { GeoJSONSource, LngLatLike, Map as MlMap } from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { Layers, Lock, LockOpen, RotateCcw, RotateCw } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { config } from '../lib/supabase';
@@ -21,7 +22,7 @@ export const AREA_STYLE: Record<AreaRow['kind'], { color: string; label: string;
   entry_zone: { color: '#9ad0ff', label: 'Entry zone', fill: 0.12 },
 };
 
-export type DrawMode = { kind: 'polygon' | 'point'; onDone: (geom: GeoJSON.Polygon | GeoJSON.Point) => void } | null;
+export type DrawMode = { kind: 'polygon' | 'point'; color?: string; onDone: (geom: GeoJSON.Polygon | GeoJSON.Point) => void } | null;
 
 export interface PointsLayer {
   lng: Float64Array | number[];
@@ -51,6 +52,12 @@ interface Props {
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+const DRAFT_COLOR = '#ffffff';
+
+// MapLibre 6 finds its worker next to its own module file. Vite moves that file (dev pre-bundling,
+// production chunks) without the worker, so every vector/GeoJSON layer silently stayed empty: no
+// basemap, no areas, no drawing, only raster imagery. Hand it the worker bundled by Vite.
+maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 /** Map orientation per event (degrees clockwise from north at the top of the screen), shared by every tab. */
 export function readBearing(key: string | undefined): number {
@@ -131,8 +138,18 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
         },
       });
       m.addSource('draft', { type: 'geojson', data: EMPTY });
-      m.addLayer({ id: 'draft-line', type: 'line', source: 'draft', paint: { 'line-color': '#ffffff', 'line-width': 2, 'line-dasharray': [2, 1] } });
-      m.addLayer({ id: 'draft-pts', type: 'circle', source: 'draft', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 4, 'circle-color': '#fff' } });
+      const isRole = (role: string) => ['==', ['get', 'role'], role] as maplibregl.FilterSpecification;
+      m.addLayer({ id: 'draft-fill', type: 'fill', source: 'draft', filter: isRole('fill'), paint: { 'fill-color': DRAFT_COLOR, 'fill-opacity': 0.18 } });
+      m.addLayer({ id: 'draft-casing', type: 'line', source: 'draft', filter: ['in', ['get', 'role'], ['literal', ['edge', 'rubber']]], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#000', 'line-width': 6, 'line-opacity': 0.55 } });
+      m.addLayer({ id: 'draft-line', type: 'line', source: 'draft', filter: isRole('edge'), layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': DRAFT_COLOR, 'line-width': 3 } });
+      m.addLayer({ id: 'draft-rubber', type: 'line', source: 'draft', filter: isRole('rubber'), paint: { 'line-color': DRAFT_COLOR, 'line-width': 2.5, 'line-dasharray': [2, 1.5] } });
+      m.addLayer({
+        id: 'draft-pts',
+        type: 'circle',
+        source: 'draft',
+        filter: isRole('vertex'),
+        paint: { 'circle-radius': ['case', ['get', 'first'], 8, 5], 'circle-color': '#fff', 'circle-stroke-color': DRAFT_COLOR, 'circle-stroke-width': 3 },
+      });
       setReady(true);
     });
     // Rotate: right-click drag / Ctrl+drag (built in), two fingers, or the ↺ ↻ buttons.
@@ -225,15 +242,25 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
     const trace = polygon && freehand;
     m.getCanvas().style.cursor = draw ? 'crosshair' : '';
 
-    const render = () => {
+    const color = draw?.color ?? '#ffffff';
+    for (const id of ['draft-line', 'draft-rubber']) m.setPaintProperty(id, 'line-color', color);
+    m.setPaintProperty('draft-fill', 'fill-color', color);
+    m.setPaintProperty('draft-pts', 'circle-stroke-color', color);
+
+    // Placed edges are solid; the edge being drawn (last corner → cursor → first corner) is dashed.
+    const render = (cursor?: [number, number]) => {
       const c = st.coords;
-      draft.setData({
-        type: 'FeatureCollection',
-        features: [
-          ...(c.length > 1 ? [{ type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: [...c, ...(c.length > 2 ? [c[0]!] : [])] }, properties: {} }] : []),
-          ...(trace ? [] : c.map((p) => ({ type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: p }, properties: {} }))),
-        ],
-      });
+      const feat = (geometry: GeoJSON.Geometry, props: Record<string, unknown>): GeoJSON.Feature => ({ type: 'Feature', geometry, properties: props });
+      const features: GeoJSON.Feature[] = [];
+      const ring = cursor && !trace ? [...c, cursor] : c;
+      if (ring.length >= 3) features.push(feat({ type: 'Polygon', coordinates: [[...ring, ring[0]!]] }, { role: 'fill' }));
+      if (c.length >= 2) features.push(feat({ type: 'LineString', coordinates: trace && !st.tracing ? [...c, c[0]!] : c }, { role: 'edge' }));
+      if (cursor && c.length >= 1 && !trace) {
+        features.push(feat({ type: 'LineString', coordinates: c.length >= 2 ? [c[c.length - 1]!, cursor, c[0]!] : [c[0]!, cursor] }, { role: 'rubber' }));
+      }
+      if (trace && st.tracing && c.length >= 3) features.push(feat({ type: 'LineString', coordinates: [c[c.length - 1]!, c[0]!] }, { role: 'rubber' }));
+      if (!trace) c.forEach((p, i) => features.push(feat({ type: 'Point', coordinates: p }, { role: 'vertex', first: i === 0 && c.length >= 3 })));
+      draft.setData({ type: 'FeatureCollection', features });
     };
     const reset = () => {
       st.coords = [];
@@ -280,7 +307,10 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       render();
     };
     const move = (e: maplibregl.MapMouseEvent) => {
-      if (!st.tracing) return;
+      if (!st.tracing) {
+        if (!trace && cb.current.draw?.kind === 'polygon' && st.coords.length) render([e.lngLat.lng, e.lngLat.lat]);
+        return;
+      }
       const last = m.project(st.coords[st.coords.length - 1]!);
       if (Math.hypot(last.x - e.point.x, last.y - e.point.y) < 3) return;
       st.coords.push([e.lngLat.lng, e.lngLat.lat]);
