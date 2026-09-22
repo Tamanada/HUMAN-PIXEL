@@ -81,6 +81,9 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [viewBearing, setViewBearing] = useState(() => readBearing(event.id));
   const alignedRotation = Math.round(-(((viewBearing + 180) % 360 + 360) % 360 - 180));
   const [rotation, setRotation] = useState(alignedRotation);
+  // Fill mode: let the engine choose rotation + position so the message covers the most of the area.
+  const [autoPlace, setAutoPlace] = useState(true);
+  const auto = sizing === 'fit' && autoPlace;
   const [minSpacing, setMinSpacing] = useState(0.9);
   const [zoneSize, setZoneSize] = useState(1500);
   const [seed, setSeed] = useState(() => randomSeed());
@@ -115,6 +118,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
     setZoneSize(1500);
     setAnchor(defaultAnchor());
     setPlacingAnchor(false);
+    setAutoPlace(true);
   };
 
   // ---- generation ----------------------------------------------------------------------------
@@ -134,8 +138,9 @@ export function FormationTab({ event, canEdit }: TabProps) {
         mask,
         anchor,
         // Fit mode without a manual width: the engine finds the largest width inside the area.
-        widthM: sizing === 'fit' && widthOverride == null ? undefined : width,
+        widthM: auto || (sizing === 'fit' && widthOverride == null) ? undefined : width,
         rotationDeg: rotation,
+        autoPlace: auto ? { preferredRotationDeg: alignedRotation } : undefined,
         targetCount: sizing === 'count' ? count : undefined,
         targetSpacingM: targetSpacing,
         minSpacingM: minSpacing,
@@ -149,7 +154,13 @@ export function FormationTab({ event, canEdit }: TabProps) {
     );
     cancelRef.current = job.cancel;
     try {
-      setResult(await job.promise);
+      const res = await job.promise;
+      setResult(res);
+      if (auto) {
+        // Show what the engine chose; switching auto off keeps it as a starting point to tweak.
+        setRotation(Math.round(res.rotationDeg));
+        setAnchor(res.anchor);
+      }
     } catch (e) {
       setGenError((e as Error).message);
     } finally {
@@ -179,7 +190,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
         if (ins.error) throw new Error(ins.error.message);
         source = { kind: 'image', assetId: ins.data.id, fileName: file!.name, mode: imgMode, invert };
       }
-      const params = { sizing, targetCount: result.points.length, targetSpacingM: targetSpacing, widthM: result.widthM, heightM: result.heightM, rotationDeg: rotation, minSpacingM: minSpacing, anchor, seed, zoneSize, engine: ENGINE_VERSION };
+      const params = { sizing, targetCount: result.points.length, targetSpacingM: targetSpacing, widthM: result.widthM, heightM: result.heightM, rotationDeg: result.rotationDeg, autoPlace: auto, minSpacingM: minSpacing, anchor: result.anchor, seed, zoneSize, engine: ENGINE_VERSION };
       return saveFormation(event.id, result, source, params, setSaveProgress);
     },
     onSuccess: ({ report: r, formationId }) => {
@@ -260,6 +271,15 @@ export function FormationTab({ event, canEdit }: TabProps) {
                   ? 'The message is drawn as large as the area allows; the number of people is calculated from it.'
                   : 'The message is sized for this many people; the area only has to contain it.'}
               </p>
+              {sizing === 'fit' && (
+                <label className="col-span-2 flex cursor-pointer items-start gap-2.5 rounded-lg border border-line p-2.5 text-sm">
+                  <input type="checkbox" checked={autoPlace} onChange={(e) => setAutoPlace(e.target.checked)} className="mt-0.5 accent-[var(--hp-pixel)]" />
+                  <span>
+                    <span className="block">Cover the most of the formation area</span>
+                    <span className="block text-xs text-muted">Rotation and position are chosen automatically (text reads as in your map view). Untick to set them by hand.</span>
+                  </span>
+                </label>
+              )}
               {sizing === 'count' && (
                 <Field label="Human pixels"><Input type="number" min={1} max={250000} value={count} onChange={(e) => setCount(Math.min(250000, Math.max(1, Number(e.target.value))))} /></Field>
               )}
@@ -270,6 +290,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
                 <Input
                   type="number"
                   min={5}
+                  disabled={auto}
                   placeholder={sizing === 'fit' ? (result ? String(Math.round(result.widthM)) : 'auto') : ''}
                   value={widthOverride ?? (sizing === 'count' ? width || '' : '')}
                   onChange={(e) => setWidthOverride(Number(e.target.value) || null)}
@@ -279,10 +300,10 @@ export function FormationTab({ event, canEdit }: TabProps) {
               <Field
                 label={`Rotation ${rotation}°`}
                 className="col-span-2"
-                hint={rotation === alignedRotation ? 'Reads left→right in the map view.' : undefined}
+                hint={auto ? 'Chosen automatically to fill the area.' : rotation === alignedRotation ? 'Reads left→right in the map view.' : undefined}
               >
-                <input type="range" min={-180} max={180} value={rotation} onChange={(e) => setRotation(Number(e.target.value))} className="w-full accent-[var(--hp-pixel)]" />
-                {rotation !== alignedRotation && (
+                <input type="range" min={-180} max={180} value={rotation} disabled={auto} onChange={(e) => setRotation(Number(e.target.value))} className="w-full accent-[var(--hp-pixel)]" />
+                {!auto && rotation !== alignedRotation && (
                   <Button size="sm" variant="ghost" onClick={() => setRotation(alignedRotation)}>Align with the map view ({alignedRotation}°)</Button>
                 )}
               </Field>
@@ -291,7 +312,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>Anchor {anchor ? `${anchor.lat.toFixed(6)}, ${anchor.lng.toFixed(6)}` : 'not set'}</span>
-              <Button size="sm" variant="ghost" onClick={() => setPlacingAnchor((v) => !v)}>{placingAnchor ? 'Click on the map…' : 'Move anchor'}</Button>
+              <Button size="sm" variant="ghost" disabled={auto} onClick={() => setPlacingAnchor((v) => !v)}>{placingAnchor ? 'Click on the map…' : 'Move anchor'}</Button>
               <Button size="sm" variant="ghost" icon={<Dices size={14} />} onClick={() => setSeed(randomSeed())}>Seed {seed}</Button>
             </div>
             <div className="mt-4 flex gap-2">

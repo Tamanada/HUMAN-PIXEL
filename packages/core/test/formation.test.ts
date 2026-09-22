@@ -257,4 +257,25 @@ describe('sizing from the surface (capacity is an output)', () => {
     // Depth ≈ half the 50 m band.
     expect(Math.abs(Math.hypot(p.x, p.y) - 175)).toBeLessThan(5);
   });
+
+  it('auto-placement turns and slides the design to fill a long slanted strip', () => {
+    // A 400 × 40 m strip turned 25° CCW, like a beach; a one-line message (10:1).
+    const line = createMask(1000, 100);
+    for (let y = 10; y < 90; y++) for (let x = 20; x < 980; x++) line.data[y * 1000 + x] = 255;
+    const corner = (x: number, y: number) => {
+      const r = (25 * Math.PI) / 180;
+      return frame.toLatLng({ x: 60 + x * Math.cos(r) - y * Math.sin(r), y: -30 + x * Math.sin(r) + y * Math.cos(r) });
+    };
+    const strip: Polygon<LatLng> = { outer: [corner(-200, -20), corner(200, -20), corner(200, 20), corner(-200, 20)] };
+    const fixed = generateFormation({ mask: line, anchor: frame.toLatLng({ x: 60, y: -30 }), targetSpacingM: 1.5, perimeter: strip, seed: 1 });
+    const auto = generateFormation({ mask: line, anchor: ANCHOR, targetSpacingM: 1.5, perimeter: strip, seed: 1, autoPlace: { preferredRotationDeg: 0 } });
+    expect(Math.abs(auto.rotationDeg - 25)).toBeLessThan(4);
+    // ≈ 400 m long (minus margins), far larger than the unrotated fit.
+    expect(auto.widthM).toBeGreaterThan(330);
+    expect(auto.points.length).toBeGreaterThan(fixed.points.length * 3);
+    expect(auto.metrics.clippedFraction).toBeLessThan(0.02);
+    // Reading direction follows the preferred rotation: turned the other way round, it flips.
+    const flipped = generateFormation({ mask: line, anchor: ANCHOR, targetSpacingM: 1.5, perimeter: strip, seed: 1, autoPlace: { preferredRotationDeg: 180 } });
+    expect(Math.abs(Math.abs(flipped.rotationDeg) - 155)).toBeLessThan(4);
+  });
 });

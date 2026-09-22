@@ -24,6 +24,7 @@ import {
 import { sampleMask, coverageFraction, type Mask } from './mask';
 import { SpatialGrid } from './grid';
 import { progressiveFillOrder } from './fillOrder';
+import { fitPlacement } from './placement';
 import { mulberry32, shuffleInPlace } from './random';
 
 export interface ExclusionInput {
@@ -45,6 +46,12 @@ export interface FormationInput {
   targetCount?: number;
   /** Desired centre-to-centre spacing when targetCount is omitted. */
   targetSpacingM?: number;
+  /**
+   * Auto-placement: rotation, position and width chosen so the design covers as much of the
+   * formation area as possible (overrides anchor, rotationDeg and widthM). The text reads in the
+   * direction closest to preferredRotationDeg (the organizer's map view).
+   */
+  autoPlace?: { preferredRotationDeg?: number };
   /** Fit mode: tolerated share of the design falling outside the allowed area. Default 0.005. */
   maxClippedFraction?: number;
   /** Minimum centre-to-centre distance between two people. */
@@ -121,6 +128,8 @@ export interface FormationResult {
   widthM: number;
   heightM: number;
   rotationDeg: number;
+  /** Centre of the design on the ground (the input anchor, or the one auto-placement chose). */
+  anchor: LatLng;
 }
 
 export class FormationError extends Error {
@@ -173,12 +182,26 @@ export function generateFormation(input: FormationInput): FormationResult {
     throw new FormationError('INVALID_INPUT', `targetCount must be an integer in [1, ${MAX_POINTS}]`);
   }
   const seed = (input.seed ?? 1) >>> 0;
-  const rotationDeg = input.rotationDeg ?? 0;
   progress('field', 0);
-  const W = input.widthM ?? fitDesignWidth(input);
+  let anchor = input.anchor;
+  let rotationDeg = input.rotationDeg ?? 0;
+  let W: number;
+  if (input.autoPlace) {
+    let pl;
+    try {
+      pl = fitPlacement({ ...input, preferredRotationDeg: input.autoPlace.preferredRotationDeg ?? rotationDeg });
+    } catch (e) {
+      throw new FormationError('NO_VALID_AREA', (e as Error).message);
+    }
+    anchor = pl.anchor;
+    rotationDeg = pl.rotationDeg;
+    W = pl.widthM;
+  } else {
+    W = input.widthM ?? fitDesignWidth(input);
+  }
   if (!(W > 0)) throw new FormationError('INVALID_INPUT', 'widthM must be positive');
   const H = input.heightM ?? (W * input.mask.height) / input.mask.width;
-  const frame = new LocalFrame(input.anchor);
+  const frame = new LocalFrame(anchor);
   const rand = mulberry32(seed);
 
   // ---- 1. constraint field -------------------------------------------------------------
@@ -353,6 +376,7 @@ export function generateFormation(input: FormationInput): FormationResult {
     widthM: W,
     heightM: H,
     rotationDeg,
+    anchor,
   };
 }
 
