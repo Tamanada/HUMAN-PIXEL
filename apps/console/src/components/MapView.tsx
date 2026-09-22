@@ -43,6 +43,8 @@ interface Props {
   onMapClick?: (lngLat: { lat: number; lng: number }) => void;
   /** Start on satellite imagery (drawing the ground needs to see it). */
   defaultSatellite?: boolean;
+  /** Error to show on the map itself (e.g. a refused shape), where the eyes are while drawing. */
+  message?: string | null;
   /** Remember and share the map orientation under this key (the event id). */
   bearingKey?: string;
   onBearingChange?: (deg: number) => void;
@@ -70,12 +72,13 @@ function writeBearing(key: string | undefined, deg: number) {
 }
 const norm180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 
-export function MapView({ areas = [], points, center, draw, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, bearingKey, onBearingChange }: Props) {
+export function MapView({ areas = [], points, center, draw, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
   const [satellite, setSatellite] = useState(defaultSatellite && !!config.satelliteTiles);
-  const drawState = useRef<{ coords: [number, number][] }>({ coords: [] });
+  const drawState = useRef<{ coords: [number, number][]; tracing?: boolean }>({ coords: [] });
+  const [freehand, setFreehand] = useState(false);
   const fitted = useRef(false);
   const [bearing, setBearing] = useState(() => readBearing(bearingKey));
   const bearingCb = useRef(onBearingChange);
@@ -205,72 +208,117 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
     m.setLayoutProperty('sat', 'visibility', satellite ? 'visible' : 'none');
   }, [satellite, ready]);
 
-  // Interaction: draw / click.
+  // Interaction: draw / click. Callbacks go through refs so a parent re-render never resets a
+  // drawing in progress.
+  const cb = useRef({ onAreaClick, onMapClick, draw });
+  cb.current = { onAreaClick, onMapClick, draw };
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
     const draft = m.getSource('draft') as GeoJSONSource;
-    drawState.current.coords = [];
+    const st = drawState.current;
+    st.coords = [];
     draft.setData(EMPTY);
+    const polygon = draw?.kind === 'polygon';
+    const trace = polygon && freehand;
     m.getCanvas().style.cursor = draw ? 'crosshair' : '';
     if (draw) m.doubleClickZoom.disable();
     else m.doubleClickZoom.enable();
+    // Freehand: the left-button drag draws instead of panning (right-drag still rotates, wheel zooms).
+    if (trace) m.dragPan.disable();
+    else m.dragPan.enable();
 
     const render = () => {
-      const c = drawState.current.coords;
+      const c = st.coords;
       draft.setData({
         type: 'FeatureCollection',
         features: [
           ...(c.length > 1 ? [{ type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: [...c, ...(c.length > 2 ? [c[0]!] : [])] }, properties: {} }] : []),
-          ...c.map((p) => ({ type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: p }, properties: {} })),
+          ...(trace ? [] : c.map((p) => ({ type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: p }, properties: {} }))),
         ],
       });
     };
-    const finish = () => {
-      const c = drawState.current.coords;
-      if (draw?.kind === 'polygon' && c.length >= 3) {
-        draw.onDone({ type: 'Polygon', coordinates: [[...c, c[0]!]] });
-      }
-      drawState.current.coords = [];
+    const reset = () => {
+      st.coords = [];
+      st.tracing = false;
       draft.setData(EMPTY);
     };
+    const finish = () => {
+      const d = cb.current.draw;
+      let c = st.coords;
+      if (trace) c = simplifyOnScreen(m, c, 1.5);
+      c = dedupeOnScreen(m, c, 2);
+      if (d?.kind === 'polygon' && c.length >= 3) d.onDone({ type: 'Polygon', coordinates: [[...c, c[0]!]] });
+      reset();
+    };
     const click = (e: maplibregl.MapMouseEvent) => {
-      if (draw) {
-        if (draw.kind === 'point') return draw.onDone({ type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] });
-        drawState.current.coords.push([e.lngLat.lng, e.lngLat.lat]);
+      const d = cb.current.draw;
+      if (d) {
+        if (d.kind === 'point') return d.onDone({ type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] });
+        if (trace) return;
+        // The 2nd click of a double-click is the "finish" gesture, not a new corner.
+        if (e.originalEvent.detail > 1) return;
+        // Clicking the first corner again closes the shape.
+        if (st.coords.length >= 3) {
+          const first = m.project(st.coords[0]!);
+          if (Math.hypot(first.x - e.point.x, first.y - e.point.y) < 12) return finish();
+        }
+        st.coords.push([e.lngLat.lng, e.lngLat.lat]);
         render();
         return;
       }
       const hit = m.queryRenderedFeatures(e.point, { layers: ['areas-fill', 'areas-point'] })[0];
-      if (hit && onAreaClick) onAreaClick(String(hit.properties?.id));
-      else onMapClick?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+      if (hit && cb.current.onAreaClick) cb.current.onAreaClick(String(hit.properties?.id));
+      else cb.current.onMapClick?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     };
     const dbl = (e: maplibregl.MapMouseEvent) => {
-      if (!draw) return;
+      if (!cb.current.draw) return;
       e.preventDefault();
+      if (!trace) finish();
+    };
+    const down = (e: maplibregl.MapMouseEvent) => {
+      if (!trace || e.originalEvent.button !== 0) return;
+      st.coords = [[e.lngLat.lng, e.lngLat.lat]];
+      st.tracing = true;
+      render();
+    };
+    const move = (e: maplibregl.MapMouseEvent) => {
+      if (!st.tracing) return;
+      const last = m.project(st.coords[st.coords.length - 1]!);
+      if (Math.hypot(last.x - e.point.x, last.y - e.point.y) < 3) return;
+      st.coords.push([e.lngLat.lng, e.lngLat.lat]);
+      render();
+    };
+    const up = () => {
+      if (!st.tracing) return;
+      st.tracing = false;
       finish();
     };
     const key = (e: KeyboardEvent) => {
-      if (!draw) return;
+      if (!cb.current.draw) return;
       if (e.key === 'Enter') finish();
-      if (e.key === 'Escape') {
-        drawState.current.coords = [];
-        draft.setData(EMPTY);
-      }
-      if (e.key === 'Backspace') {
-        drawState.current.coords.pop();
+      if (e.key === 'Escape') reset();
+      if (e.key === 'Backspace' && !trace) {
+        st.coords.pop();
         render();
       }
     };
     m.on('click', click);
     m.on('dblclick', dbl);
+    m.on('mousedown', down);
+    m.on('mousemove', move);
+    m.on('mouseup', up);
     window.addEventListener('keydown', key);
     return () => {
       m.off('click', click);
       m.off('dblclick', dbl);
+      m.off('mousedown', down);
+      m.off('mousemove', move);
+      m.off('mouseup', up);
       window.removeEventListener('keydown', key);
+      m.dragPan.enable();
     };
-  }, [draw, ready, onAreaClick, onMapClick]);
+  }, [draw, ready, freehand]);
 
   const rotateTo = (deg: number) => {
     const m = map.current;
@@ -301,9 +349,27 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
         <button aria-label="Reset to north" onClick={() => rotateTo(0)} className="hp-digits min-w-12 rounded-md px-1.5 py-1 hover:bg-surface-2">{Math.round(norm180(bearing))}°</button>
         <button aria-label="Rotate right" onClick={(e) => rotateTo(bearing + step(e))} className="rounded-md p-1.5 hover:bg-surface-2"><RotateCw size={14} /></button>
       </div>
-      {draw && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs backdrop-blur">
-          {draw.kind === 'polygon' ? 'Click to add corners · double-click or Enter to finish · Backspace undo · Esc restart' : 'Click the map to place the point'}
+      {(draw || message) && (
+        <div className="absolute bottom-3 left-1/2 flex w-[min(92%,560px)] -translate-x-1/2 flex-col items-center gap-2">
+          {message && <div role="alert" className="w-full rounded-lg border border-bad/60 bg-surface/95 px-3 py-2 text-xs text-bad backdrop-blur">{message}</div>}
+          {draw && (
+            <div className="flex w-full flex-wrap items-center justify-center gap-2 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs backdrop-blur">
+              {draw.kind === 'polygon' && (
+                <div className="flex gap-0.5 rounded-md bg-bg p-0.5">
+                  {([[false, 'Corners'], [true, 'Freehand']] as const).map(([f, label]) => (
+                    <button key={label} onClick={() => setFreehand(f)} className={`rounded px-2 py-1 ${freehand === f ? 'bg-surface-2 text-text' : 'text-muted'}`}>{label}</button>
+                  ))}
+                </div>
+              )}
+              <span className="text-muted">
+                {draw.kind === 'point'
+                  ? 'Click the map to place the point'
+                  : freehand
+                    ? 'Hold the left button and trace the outline; release to finish · Esc cancels · right-drag rotates'
+                    : 'Click each corner · click the first corner or double-click to finish · Backspace undo · Esc restart'}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -314,4 +380,53 @@ function visitCoords(g: GeoJSON.Geometry, fn: (c: [number, number]) => void) {
   if (g.type === 'Point') fn(g.coordinates as [number, number]);
   else if (g.type === 'Polygon') g.coordinates.forEach((r) => r.forEach((c) => fn(c as [number, number])));
   else if (g.type === 'MultiPolygon') g.coordinates.forEach((p) => p.forEach((r) => r.forEach((c) => fn(c as [number, number]))));
+}
+
+/** Drops consecutive vertices closer than `px` on screen (double-click leftovers, jitter). */
+function dedupeOnScreen(m: MlMap, c: [number, number][], px: number): [number, number][] {
+  const out: [number, number][] = [];
+  let prev: { x: number; y: number } | null = null;
+  for (const p of c) {
+    const q = m.project(p);
+    if (prev && Math.hypot(q.x - prev.x, q.y - prev.y) < px) continue;
+    out.push(p);
+    prev = q;
+  }
+  // The closing vertex is added by the caller: drop a last point sitting on the first.
+  if (out.length > 3) {
+    const a = m.project(out[0]!);
+    const b = m.project(out[out.length - 1]!);
+    if (Math.hypot(a.x - b.x, a.y - b.y) < px * 3) out.pop();
+  }
+  return out;
+}
+
+/** Douglas–Peucker in screen pixels: a hand trace keeps its curves with a few dozen vertices. */
+function simplifyOnScreen(m: MlMap, c: [number, number][], tolerancePx: number): [number, number][] {
+  if (c.length < 4) return c;
+  const pts = c.map((p) => m.project(p));
+  const keep = new Uint8Array(c.length);
+  keep[0] = keep[c.length - 1] = 1;
+  const stack: [number, number][] = [[0, c.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop()!;
+    const a = pts[i]!;
+    const b = pts[j]!;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1e-9;
+    let far = -1;
+    let dmax = tolerancePx;
+    for (let k = i + 1; k < j; k++) {
+      const p = pts[k]!;
+      const d = Math.abs((b.x - a.x) * (a.y - p.y) - (a.x - p.x) * (b.y - a.y)) / len;
+      if (d > dmax) {
+        dmax = d;
+        far = k;
+      }
+    }
+    if (far >= 0) {
+      keep[far] = 1;
+      stack.push([i, far], [far, j]);
+    }
+  }
+  return c.filter((_, k) => keep[k]);
 }

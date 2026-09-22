@@ -164,6 +164,20 @@ describe('formation validation is enforced by the database', () => {
   });
 });
 
+describe('hand-drawn areas', () => {
+  it('repairs small self-crossings (double-click spike, lasso overshoot) and refuses real figure-eights', async () => {
+    const s = await buildScenario(pool, 50, { lock: false, open: false });
+    const save = (coords: number[][]) =>
+      rpc<string>(pool, s.organizer, 'save_event_area', [s.eventId, 'assembly', JSON.stringify({ type: 'Polygon', coordinates: [coords] }), null, 0, null, null]);
+    // Lasso overshooting its start: crosses itself near the first corner.
+    const id = await save([[100, 9], [100.001, 9], [100.001, 9.001], [100, 9.001], [100.0001, 8.9999], [100, 9]]);
+    const g = await pool.query(`select extensions.st_isvalid(geom) ok, extensions.geometrytype(geom) t from public.event_areas where id = $1`, [id]);
+    expect(g.rows[0]).toEqual({ ok: true, t: 'POLYGON' });
+    // A figure-eight with two equal lobes is ambiguous: refused.
+    await expectError(save([[100, 9], [100.001, 9.001], [100.001, 9], [100, 9.001], [100, 9]]), /crosses itself/);
+  });
+});
+
 describe('assignment integrity under concurrency', () => {
   for (const n of [1_000, 5_000, 12_000]) {
     it(`${n.toLocaleString()} simultaneous joins (+10% over capacity): no duplicates, exact waitlist`, async () => {
