@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { GeoJSONSource, LngLatLike, Map as MlMap } from 'maplibre-gl';
-import { Layers, RotateCcw, RotateCw } from 'lucide-react';
+import { Layers, Lock, LockOpen, RotateCcw, RotateCw } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { config } from '../lib/supabase';
 import type { AreaRow } from '../lib/types';
@@ -79,6 +79,8 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
   const [satellite, setSatellite] = useState(defaultSatellite && !!config.satelliteTiles);
   const drawState = useRef<{ coords: [number, number][]; tracing?: boolean }>({ coords: [] });
   const [freehand, setFreehand] = useState(false);
+  // Locked: the view cannot move at all (no pan, zoom, rotate), so clicks only place corners.
+  const [locked, setLocked] = useState(false);
   const fitted = useRef(false);
   const [bearing, setBearing] = useState(() => readBearing(bearingKey));
   const bearingCb = useRef(onBearingChange);
@@ -222,11 +224,6 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
     const polygon = draw?.kind === 'polygon';
     const trace = polygon && freehand;
     m.getCanvas().style.cursor = draw ? 'crosshair' : '';
-    if (draw) m.doubleClickZoom.disable();
-    else m.doubleClickZoom.enable();
-    // Freehand: the left-button drag draws instead of panning (right-drag still rotates, wheel zooms).
-    if (trace) m.dragPan.disable();
-    else m.dragPan.enable();
 
     const render = () => {
       const c = st.coords;
@@ -316,9 +313,24 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       m.off('mousemove', move);
       m.off('mouseup', up);
       window.removeEventListener('keydown', key);
-      m.dragPan.enable();
     };
   }, [draw, ready, freehand]);
+
+  // Which gestures move the view: none when locked; in freehand the left drag draws instead of panning.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    const trace = draw?.kind === 'polygon' && freehand;
+    const set = (h: { enable: () => void; disable: () => void }, on: boolean) => (on ? h.enable() : h.disable());
+    set(m.dragPan, !locked && !trace);
+    set(m.scrollZoom, !locked);
+    set(m.boxZoom, !locked);
+    set(m.dragRotate, !locked);
+    set(m.keyboard, !locked);
+    set(m.touchZoomRotate, !locked);
+    set(m.doubleClickZoom, !locked && !draw);
+    m.getContainer().classList.toggle('hp-map-locked', locked);
+  }, [locked, draw, freehand, ready]);
 
   const rotateTo = (deg: number) => {
     const m = map.current;
@@ -345,9 +357,19 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
         style={{ top: config.satelliteTiles ? 48 : 12 }}
         title="Rotate the map: buttons (Shift = 1°), right-click drag, or Ctrl + drag"
       >
-        <button aria-label="Rotate left" onClick={(e) => rotateTo(bearing - step(e))} className="rounded-md p-1.5 hover:bg-surface-2"><RotateCcw size={14} /></button>
-        <button aria-label="Reset to north" onClick={() => rotateTo(0)} className="hp-digits min-w-12 rounded-md px-1.5 py-1 hover:bg-surface-2">{Math.round(norm180(bearing))}°</button>
-        <button aria-label="Rotate right" onClick={(e) => rotateTo(bearing + step(e))} className="rounded-md p-1.5 hover:bg-surface-2"><RotateCw size={14} /></button>
+        <button
+          aria-label={locked ? 'Unlock the map' : 'Lock the map'}
+          title={locked ? 'Unlock: the map can move again' : 'Lock the view: no pan, zoom or rotation while you click corners'}
+          onClick={() => setLocked((v) => !v)}
+          className={`flex items-center gap-1 rounded-md px-1.5 py-1 ${locked ? 'bg-pixel text-on-pixel' : 'hover:bg-surface-2'}`}
+        >
+          {locked ? <Lock size={14} /> : <LockOpen size={14} />}
+          {locked && <span>Locked</span>}
+        </button>
+        <span className="mx-0.5 h-4 w-px bg-line" />
+        <button disabled={locked} aria-label="Rotate left" onClick={(e) => rotateTo(bearing - step(e))} className="rounded-md p-1.5 hover:bg-surface-2 disabled:opacity-40"><RotateCcw size={14} /></button>
+        <button disabled={locked} aria-label="Reset to north" onClick={() => rotateTo(0)} className="hp-digits min-w-12 rounded-md px-1.5 py-1 hover:bg-surface-2 disabled:opacity-60">{Math.round(norm180(bearing))}°</button>
+        <button disabled={locked} aria-label="Rotate right" onClick={(e) => rotateTo(bearing + step(e))} className="rounded-md p-1.5 hover:bg-surface-2 disabled:opacity-40"><RotateCw size={14} /></button>
       </div>
       {(draw || message) && (
         <div className="absolute bottom-3 left-1/2 flex w-[min(92%,560px)] -translate-x-1/2 flex-col items-center gap-2">

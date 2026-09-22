@@ -115,6 +115,10 @@ body {
   outline-offset: 2px;
 }
 
+.hp-map-locked .maplibregl-ctrl-top-right {
+  display: none; /* zoom buttons would move a locked view */
+}
+
 .maplibregl-ctrl-attrib {
   font-size: 10px;
 }
