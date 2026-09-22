@@ -1,11 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Crosshair, Trash2 } from 'lucide-react';
+import { surfaceCapacity } from '@human-pixel/core';
 import { Alert, Badge, Button, Card, Field, Input, Toggle } from '../../components/ui';
 import { AREA_STYLE, MapView, type DrawMode } from '../../components/MapView';
 import { rpc, supabase } from '../../lib/supabase';
 import type { AreaRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
+import { constraintsFromAreas } from './formationClient';
 import { useAreas } from './hooks';
 
 const TOOLS: { kind: AreaRow['kind']; shape: 'polygon' | 'point'; help: string }[] = [
@@ -93,6 +96,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
         {error && <Alert tone="bad">{(error as Error).message}</Alert>}
       </div>
       <div className="space-y-4">
+        <SurfaceCard areas={areas.data ?? []} eventId={event.id} />
         {locked && <Alert tone="warn">A formation is locked: perimeter, formation area, exclusions, no-go and emergency zones are frozen. Access, assembly and entry areas can still change.</Alert>}
         {canEdit && (
           <Card title="Draw">
@@ -138,6 +142,34 @@ export function LocationTab({ event, canEdit }: TabProps) {
         {sel && <AreaEditor key={sel.id} area={sel} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
       </div>
     </div>
+  );
+}
+
+/** First number of the plan: what the ground can hold. The formation step turns it into a head count. */
+function SurfaceCard({ areas, eventId }: { areas: AreaRow[]; eventId: string }) {
+  const cap = useMemo(() => surfaceCapacity(constraintsFromAreas(areas)), [areas]);
+  if (!cap) {
+    return <Alert>Draw the perimeter: the console then shows how many people the surface can hold.</Alert>;
+  }
+  const at13 = cap.bySpacing.find((b) => b.spacingM === 1.3)?.people ?? 0;
+  return (
+    <Card title="What this surface holds">
+      <p className="hp-digits text-2xl">{Math.round(cap.usableAreaM2).toLocaleString()} m²</p>
+      <p className="mb-3 text-xs text-muted">usable, after exclusions and their safety buffers</p>
+      <dl className="space-y-1 text-sm">
+        {cap.bySpacing.map((b) => (
+          <div key={b.spacingM} className="flex justify-between border-b border-line py-1">
+            <dt className="text-muted">Filled solid at {b.spacingM} m</dt>
+            <dd className="hp-digits">{b.people.toLocaleString()}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-3 text-xs text-muted">
+        A message only covers part of its surface (letters and gaps): typically 25–45 %, so about{' '}
+        <span className="hp-digits text-text">{Math.round(at13 * 0.25).toLocaleString()}–{Math.round(at13 * 0.45).toLocaleString()}</span> people at 1.3 m.
+        The exact number comes from the design in <Link to={`/events/${eventId}/formation`} className="text-pixel underline">Formation</Link>.
+      </p>
+    </Card>
   );
 }
 

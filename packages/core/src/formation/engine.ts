@@ -35,12 +35,18 @@ export interface FormationInput {
   mask: Mask;
   /** Geographic centre of the design. */
   anchor: LatLng;
-  widthM: number;
+  /** Design width on the ground. Omitted ⇒ the largest width that fits the allowed area (see fitDesignWidth). */
+  widthM?: number;
   /** Defaults to widthM × mask aspect ratio (no distortion). */
   heightM?: number;
   /** Counter-clockwise rotation of the design on the ground, degrees. 0 = design "up" faces north. */
   rotationDeg?: number;
-  targetCount: number;
+  /** Number of people. Omitted ⇒ derived from targetSpacingM: as many as the design holds at that spacing. */
+  targetCount?: number;
+  /** Desired centre-to-centre spacing when targetCount is omitted. */
+  targetSpacingM?: number;
+  /** Fit mode: tolerated share of the design falling outside the allowed area. Default 0.005. */
+  maxClippedFraction?: number;
   /** Minimum centre-to-centre distance between two people. */
   minSpacingM?: number;
   perimeter?: Polygon<LatLng> | null;
@@ -131,6 +137,7 @@ export class FormationError extends Error {
 const SQRT3 = Math.sqrt(3);
 const MAX_FIELD_CELLS = 6_000_000;
 const MAX_LLOYD_SAMPLES_PER_POINT = 48;
+const MAX_POINTS = 250_000;
 
 interface Field {
   data: Uint8Array;
@@ -157,24 +164,28 @@ export function zoneLabel(i: number): string {
 export function generateFormation(input: FormationInput): FormationResult {
   const started = performance.now();
   const progress = input.onProgress ?? (() => {});
-  const N = input.targetCount;
-  if (!Number.isInteger(N) || N < 1 || N > 250_000) throw new FormationError('INVALID_INPUT', 'targetCount must be an integer in [1, 250000]');
-  if (!(input.widthM > 0)) throw new FormationError('INVALID_INPUT', 'widthM must be positive');
   const minSpacing = input.minSpacingM ?? 0.9;
   if (!(minSpacing > 0.3)) throw new FormationError('INVALID_INPUT', 'minSpacingM must be > 0.3 m');
+  if (input.targetCount == null && !(input.targetSpacingM != null && input.targetSpacingM >= minSpacing)) {
+    throw new FormationError('INVALID_INPUT', 'Give targetCount, or targetSpacingM ≥ minSpacingM');
+  }
+  if (input.targetCount != null && (!Number.isInteger(input.targetCount) || input.targetCount < 1 || input.targetCount > MAX_POINTS)) {
+    throw new FormationError('INVALID_INPUT', `targetCount must be an integer in [1, ${MAX_POINTS}]`);
+  }
   const seed = (input.seed ?? 1) >>> 0;
   const rotationDeg = input.rotationDeg ?? 0;
-  const W = input.widthM;
+  progress('field', 0);
+  const W = input.widthM ?? fitDesignWidth(input);
+  if (!(W > 0)) throw new FormationError('INVALID_INPUT', 'widthM must be positive');
   const H = input.heightM ?? (W * input.mask.height) / input.mask.width;
   const frame = new LocalFrame(input.anchor);
   const rand = mulberry32(seed);
 
   // ---- 1. constraint field -------------------------------------------------------------
-  progress('field', 0);
   const coverage = coverageFraction(input.mask);
   if (coverage <= 0) throw new FormationError('EMPTY_DESIGN', 'The design is empty.');
   const estArea = coverage * W * H;
-  const sEst = Math.sqrt((2 * estArea) / (SQRT3 * N));
+  const sEst = input.targetCount != null ? Math.sqrt((2 * estArea) / (SQRT3 * input.targetCount)) : input.targetSpacingM!;
   let cell = Math.max(sEst / 6, 0.03);
   if ((W / cell) * (H / cell) > MAX_FIELD_CELLS) cell = Math.sqrt((W * H) / MAX_FIELD_CELLS);
   const field = buildField(input, frame, W, H, cell, rotationDeg, progress);
@@ -187,10 +198,16 @@ export function generateFormation(input: FormationInput): FormationResult {
 
   // ---- 2. spacing solve ----------------------------------------------------------------
   progress('spacing', 0);
-  const s0 = Math.sqrt((2 * usableArea) / (SQRT3 * N));
   const ox = rand();
   const oy = rand();
   const countAt = (s: number) => latticeCount(field, s, ox, oy);
+  // Count-from-spacing: the design holds exactly the people of a hex lattice at that spacing.
+  const N = input.targetCount ?? countAt(input.targetSpacingM!);
+  if (N < 1) throw new FormationError('DESIGN_TOO_SMALL', 'The design is too small to hold anyone at this spacing.');
+  if (N > MAX_POINTS) {
+    throw new FormationError('INVALID_INPUT', `The design would hold ${N} people (maximum ${MAX_POINTS}). Increase the spacing or reduce the area.`, { available: N });
+  }
+  const s0 = Math.sqrt((2 * usableArea) / (SQRT3 * N));
   if (countAt(minSpacing) < N) {
     const available = countAt(minSpacing);
     const scale = Math.sqrt(N / Math.max(1, available));
@@ -340,6 +357,56 @@ export function generateFormation(input: FormationInput): FormationResult {
 }
 
 // ----------------------------------------------------------------------------------------------
+
+/**
+ * Largest design width (metres) whose footprint, centred on the anchor, stays inside the allowed
+ * area (formation area, else perimeter), clipping at most `maxClippedFraction` of the design.
+ * Only the outer boundary limits the size: exclusions inside it (rocks, stages) just remove the
+ * pixels they cover, as in any generation. Clipping is not strictly monotonic in width on
+ * irregular shapes, so a geometric scan from the largest candidate finds the largest feasible
+ * width, then a bisection refines it; the result keeps a 3 % margin for the finer final raster.
+ */
+export function fitDesignWidth(
+  input: Pick<FormationInput, 'mask' | 'anchor' | 'rotationDeg' | 'perimeter' | 'formationArea' | 'coverageThreshold' | 'maxClippedFraction'>,
+): number {
+  const area = input.formationArea ?? input.perimeter;
+  if (!area) throw new FormationError('INVALID_INPUT', 'Draw the event perimeter (or a formation area) first: the design is sized to fit it.');
+  if (coverageFraction(input.mask) <= 0) throw new FormationError('EMPTY_DESIGN', 'The design is empty.');
+  const frame = new LocalFrame(input.anchor);
+  const local = polygonToLocal(frame, area);
+  const reach = Math.max(...local.outer.map((p) => Math.hypot(p.x, p.y)));
+  const maxClip = input.maxClippedFraction ?? 0.005;
+  const aspect = input.mask.height / input.mask.width;
+  const boundary = { ...input, exclusions: [], targetCount: 1 } as unknown as FormationInput;
+  const fits = (w: number): boolean => {
+    const h = w * aspect;
+    const f = buildField({ ...boundary, widthM: w }, frame, w, h, Math.max(w, h) / 320, input.rotationDeg ?? 0, () => {});
+    return f.designCells > 0 && 1 - f.validCells / f.designCells <= maxClip;
+  };
+  const lo = 2;
+  const hi = 2 * reach + 2;
+  if (!fits(lo)) {
+    throw new FormationError('NO_VALID_AREA', 'The design anchor is outside the allowed area. Move the anchor into the formation area.');
+  }
+  const STEPS = 48;
+  const ratio = Math.pow(hi / lo, 1 / STEPS);
+  let good = lo;
+  let bad = hi;
+  for (let k = STEPS; k >= 1; k--) {
+    const w = lo * Math.pow(ratio, k);
+    if (fits(w)) {
+      good = w;
+      bad = k === STEPS ? w : lo * Math.pow(ratio, k + 1);
+      break;
+    }
+  }
+  for (let it = 0; it < 12 && bad - good > 0.25; it++) {
+    const mid = (good + bad) / 2;
+    if (fits(mid)) good = mid;
+    else bad = mid;
+  }
+  return good * 0.97;
+}
 
 function buildField(
   input: FormationInput,

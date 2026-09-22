@@ -16,7 +16,7 @@ interface EventRow {
   state: EventState;
   starts_at: string | null;
   timezone: string;
-  capacity: number;
+  capacity: number | null;
   venue_name: string | null;
   created_at: string;
 }
@@ -123,7 +123,7 @@ export function EventsPage() {
         ) : (
           <Table head={['Event', 'Organization', 'State', 'Starts (event tz)', 'Registered', 'Capacity', 'Created']}>
             {rows.map((e) => {
-              const fill = e.registered !== null && e.capacity > 0 ? e.registered / e.capacity : null;
+              const fill = e.registered !== null && e.capacity ? e.registered / e.capacity : null;
               return (
                 <tr key={e.id}>
                   <Td>

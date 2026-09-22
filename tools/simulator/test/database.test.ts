@@ -313,6 +313,24 @@ describe('event state machine (database)', () => {
     expect(a.rows[0].n).toBe(2);
   });
 
+  it('capacity is an output of the formation: required to open, set by lock, then frozen', async () => {
+    const s = await buildScenario(pool, 150, { lock: false, open: false });
+    const setCap = (v: number | null) =>
+      asUser(pool, s.organizer, (c) => c.query(`update public.events set capacity = $2 where id = $1`, [s.eventId, v]));
+    const cap = async () => (await pool.query(`select capacity from public.events where id = $1`, [s.eventId])).rows[0].capacity;
+    await setCap(null); // DRAFT: "to be decided by the design"
+    await expectError(rpc(pool, s.organizer, 'transition_event', [s.eventId, 'REGISTRATION_OPEN', null]), /PRECONDITION_CAPACITY/);
+    expect(await rpc(pool, s.organizer, 'set_capacity_from_formation', [s.formationId])).toBe(150);
+    expect(await cap()).toBe(150);
+    await setCap(60); // a manual target is allowed until a formation is locked
+    await rpc(pool, s.organizer, 'transition_event', [s.eventId, 'REGISTRATION_OPEN', null]);
+    await expectError(setCap(null), /CAPACITY_REQUIRED/);
+    const lock = await rpc<any>(pool, s.organizer, 'formation_lock', [s.formationId]);
+    expect(lock.capacity).toBe(150);
+    expect(await cap()).toBe(150);
+    await expectError(setCap(10), /CAPACITY_FROM_FORMATION/);
+  });
+
   it('the scheduler moves READY events to LIVE at start time and snapshots attendance', async () => {
     const s = await buildScenario(pool, 100);
     for (const st of ['EVENT_PREPARATION', 'PARTICIPANT_NAVIGATION', 'POSITIONING', 'READY']) await rpc(pool, s.organizer, 'transition_event', [s.eventId, st, 'test']);

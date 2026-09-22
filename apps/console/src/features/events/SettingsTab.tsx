@@ -83,7 +83,20 @@ export function SettingsTab({ event, canEdit }: TabProps) {
       </Card>
       <Card title="Positioning">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Capacity (pixels)"><Input type="number" disabled={frozen} min={1} max={250000} value={d.capacity} onChange={(e) => set('capacity', Number(e.target.value))} /></Field>
+          <Field
+            label="Capacity (pixels)"
+            hint={event.active_formation_id ? 'Set by the locked formation.' : d.capacity == null ? 'Empty: calculated from the formation.' : 'Manual target until a formation is locked.'}
+          >
+            <Input
+              type="number"
+              disabled={frozen || !!event.active_formation_id}
+              min={1}
+              max={250000}
+              placeholder="From the formation"
+              value={d.capacity ?? ''}
+              onChange={(e) => set('capacity', e.target.value === '' ? null : Number(e.target.value))}
+            />
+          </Field>
           <Field label="Allocation">
             <Select disabled={frozen} value={d.allocation_mode} onChange={(e) => set('allocation_mode', e.target.value as Draft['allocation_mode'])}>
               <option value="progressive">Progressive (readable at any turnout)</option>

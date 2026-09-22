@@ -151,6 +151,23 @@ perimeter, exclusions (+ safety buffers).
 
 The engine is pure (`packages/core`) and deterministic for a given seed. It is tested at 1k / 5k / 12k / 50k.
 
+**Capacity is an output, not an input.** Nobody knows the head count before the surface and the
+message exist, so an event is created without a capacity (`events.capacity` is NULL = "set by
+the formation"). The order is surface → design → head count → capacity:
+
+- *Location* shows what the surface holds (`surfaceCapacity`: usable m² after buffered
+  exclusions, hex packing at 1.2 / 1.3 / 1.5 m). A message covers only 25–45 % of that.
+- *Formation*, two sizing modes. **Fill the surface**: `fitDesignWidth` finds the largest width
+  whose footprint stays inside the formation area (else the perimeter). Only the outer boundary
+  limits the size; exclusions inside it just remove pixels. N is then the hex-lattice count at the
+  target spacing. **I know my head count**: N is given and the width follows (the old mode).
+- Capacity follows the design. `set_capacity_from_formation` adopts a validated version's pixel
+  count so registration can open while the design stays editable. `formation_lock` sets
+  capacity = pixel count, and from then on it cannot be edited by hand
+  (`CAPACITY_FROM_FORMATION`).
+- Opening registration requires a capacity (`PRECONDITION_CAPACITY`). Formations are bounded
+  by the plan's `max_participants_per_event`, no longer by a number typed in advance.
+
 ## 8. Synchronisation model
 
 Clock: NTP-style exchange with the `time` Edge Function. 5 samples, keep the 3 with the lowest RTT,

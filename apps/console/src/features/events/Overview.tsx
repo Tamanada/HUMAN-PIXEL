@@ -13,7 +13,7 @@ import { useAreas, useCounters, useFormations } from './hooks';
 const FLOW: EventState[] = EVENT_STATES.filter((s) => s !== 'CANCELLED');
 
 const TRANSITION_HELP: Partial<Record<EventState, string>> = {
-  REGISTRATION_OPEN: 'Publishes the event: participants can join with the code or QR.',
+  REGISTRATION_OPEN: 'Publishes the event: participants can join with the code or QR. Requires a capacity (from the formation).',
   REGISTRATION_CLOSED: 'Stops new registrations (late registration still follows your settings later).',
   EVENT_PREPARATION: 'Freezes the formation plan. Requires a locked formation.',
   PARTICIPANT_NAVIGATION: 'Releases every exact position now and tells phones to guide people to their pixel.',
@@ -50,6 +50,7 @@ export function Overview({ event, canEdit }: TabProps) {
   const checklist: [boolean, string, string][] = [
     [!!event.starts_at && Date.parse(event.starts_at) > Date.now() - 86400_000, 'Formation start time set', 'settings'],
     [hasPerimeter, 'Event perimeter drawn', 'location'],
+    [event.capacity != null, 'Capacity set (calculated from the formation)', 'formation'],
     [!!locked, 'Formation generated, validated and locked', 'formation'],
     [!!event.positions_release_at, 'Position release time chosen', 'settings'],
     [!!event.arrival_deadline, 'Arrival deadline set', 'settings'],
@@ -61,7 +62,7 @@ export function Overview({ event, canEdit }: TabProps) {
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="space-y-6 lg:col-span-2">
         <div className="grid gap-3 sm:grid-cols-3">
-          <Stat label="Registered" value={(counters.data?.registered ?? 0).toLocaleString()} sub={`of ${event.capacity.toLocaleString()} capacity`} tone="pixel" />
+          <Stat label="Registered" value={(counters.data?.registered ?? 0).toLocaleString()} sub={event.capacity != null ? `of ${event.capacity.toLocaleString()} capacity` : 'capacity set by the formation'} tone="pixel" />
           <Stat label="Formation" value={locked ? `v${locked.version}` : '—'} sub={locked ? `${locked.point_count.toLocaleString()} pixels · locked` : 'not locked'} />
           <Stat label="Starts" value={event.starts_at ? fmtRelative(event.starts_at) : '—'} sub={fmtDateTime(event.starts_at, event.timezone)} />
         </div>

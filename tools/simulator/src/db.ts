@@ -107,7 +107,7 @@ export interface Scenario {
  * Builds a complete event: organization (enterprise plan), event, perimeter, exclusion,
  * formation generated with the real engine, uploaded in chunks, validated and locked.
  */
-export async function buildScenario(pool: pg.Pool, n: number, opts: { text?: string; lock?: boolean } = {}): Promise<Scenario> {
+export async function buildScenario(pool: pg.Pool, n: number, opts: { text?: string; lock?: boolean; open?: boolean } = {}): Promise<Scenario> {
   const [organizer] = await createUsers(pool, 1, 'organizer');
   const org = await rpc<{ id: string }>(pool, organizer!, 'create_organization', ['Test Org ' + n]);
   // Platform admin grants capacity (as postgres, i.e. an operator action).
@@ -144,7 +144,7 @@ export async function buildScenario(pool: pg.Pool, n: number, opts: { text?: str
   const report = await rpc<{ ok: boolean }>(pool, organizer!, 'formation_finalize', [formationId, pointsChecksum(formation.points)]);
   if (!report.ok) throw new Error('Formation validation failed: ' + JSON.stringify(report));
   if (opts.lock !== false) await rpc(pool, organizer!, 'formation_lock', [formationId]);
-  await rpc(pool, organizer!, 'transition_event', [event.id, 'REGISTRATION_OPEN', 'test']);
+  if (opts.open !== false) await rpc(pool, organizer!, 'transition_event', [event.id, 'REGISTRATION_OPEN', 'test']);
   return { organizer: organizer!, orgId: org.id, eventId: event.id, joinCode: event.join_code, formationId, formation };
 }
 

@@ -14,7 +14,8 @@ export interface EventRow {
   starts_at: string | null;
   arrival_deadline: string | null;
   positions_release_at: string | null;
-  capacity: number;
+  /** Registration limit. NULL until the formation (or a manual target) decides it. */
+  capacity: number | null;
   tolerance_radius_m: number;
   required_accuracy_m: number;
   allocation_mode: 'progressive' | 'random' | 'sequential';

@@ -70,7 +70,10 @@ export function FormationTab({ event, canEdit }: TabProps) {
   }, [mode, text, font, letterSpacing, file, imgMode, invert]);
 
   // ---- placement -----------------------------------------------------------------------------
-  const [count, setCount] = useState(event.capacity);
+  // Sizing: "fit" = the surface decides (largest design, head count computed); "count" = a known
+  // audience decides (design sized for N people). Capacity is derived from the result either way.
+  const [sizing, setSizing] = useState<'fit' | 'count'>(event.capacity == null ? 'fit' : 'count');
+  const [count, setCount] = useState(event.capacity ?? 5000);
   const [targetSpacing, setTargetSpacing] = useState(1.3);
   const [widthOverride, setWidthOverride] = useState<number | null>(null);
   const [rotation, setRotation] = useState(0);
@@ -79,7 +82,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [seed, setSeed] = useState(() => randomSeed());
   const [anchor, setAnchor] = useState<{ lat: number; lng: number } | null>(event.center_lat != null ? { lat: event.center_lat, lng: event.center_lng! } : null);
   const [placingAnchor, setPlacingAnchor] = useState(false);
-  const autoWidth = mask ? suggestWidth(mask, count, targetSpacing) : 0;
+  const autoWidth = mask && sizing === 'count' ? suggestWidth(mask, count, targetSpacing) : 0;
   const width = widthOverride ?? Math.round(autoWidth);
   const height = mask ? Math.round((width * mask.height) / mask.width) : 0;
 
@@ -108,9 +111,11 @@ export function FormationTab({ event, canEdit }: TabProps) {
       {
         mask,
         anchor,
-        widthM: width,
+        // Fit mode without a manual width: the engine finds the largest width inside the area.
+        widthM: sizing === 'fit' && widthOverride == null ? undefined : width,
         rotationDeg: rotation,
-        targetCount: count,
+        targetCount: sizing === 'count' ? count : undefined,
+        targetSpacingM: targetSpacing,
         minSpacingM: minSpacing,
         perimeter: c.perimeter,
         formationArea: c.formationArea,
@@ -134,6 +139,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
   // ---- save / lock ---------------------------------------------------------------------------
   const [saveProgress, setSaveProgress] = useState<SaveProgress | null>(null);
   const [report, setReport] = useState<Record<string, unknown> | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: async () => {
       if (!result || !mask) throw new Error('Generate first');
@@ -151,11 +157,12 @@ export function FormationTab({ event, canEdit }: TabProps) {
         if (ins.error) throw new Error(ins.error.message);
         source = { kind: 'image', assetId: ins.data.id, fileName: file!.name, mode: imgMode, invert };
       }
-      const params = { targetCount: count, widthM: result.widthM, heightM: result.heightM, rotationDeg: rotation, minSpacingM: minSpacing, anchor, seed, zoneSize, engine: ENGINE_VERSION };
+      const params = { sizing, targetCount: result.points.length, targetSpacingM: targetSpacing, widthM: result.widthM, heightM: result.heightM, rotationDeg: rotation, minSpacingM: minSpacing, anchor, seed, zoneSize, engine: ENGINE_VERSION };
       return saveFormation(event.id, result, source, params, setSaveProgress);
     },
-    onSuccess: ({ report: r }) => {
+    onSuccess: ({ report: r, formationId }) => {
       setReport(r);
+      setSavedId(r.ok ? formationId : null);
       setSaveProgress(null);
       void qc.invalidateQueries({ queryKey: ['formations', event.id] });
     },
@@ -218,10 +225,32 @@ export function FormationTab({ event, canEdit }: TabProps) {
 
           <Card title="2 · Placement">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Human pixels"><Input type="number" min={1} max={event.capacity} value={count} onChange={(e) => setCount(Math.min(event.capacity, Math.max(1, Number(e.target.value))))} /></Field>
-              <Field label="Target spacing (m)" hint="Drives the size"><Input type="number" min={minSpacing} max={10} step={0.1} value={targetSpacing} onChange={(e) => (setTargetSpacing(Number(e.target.value)), setWidthOverride(null))} /></Field>
-              <Field label="Width (m)" hint={widthOverride != null ? 'manual' : 'auto'}><Input type="number" min={5} value={width || ''} onChange={(e) => setWidthOverride(Number(e.target.value) || null)} /></Field>
-              <Field label="Height (m)"><Input disabled value={height || ''} /></Field>
+              <div className="col-span-2 grid grid-cols-2 gap-1 rounded-lg bg-bg p-1">
+                {([['fit', 'Fill the surface'], ['count', 'I know my head count']] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => (setSizing(k), setWidthOverride(null))} className={`rounded-md py-1.5 text-sm ${sizing === k ? 'bg-surface-2 text-text' : 'text-muted'}`}>{label}</button>
+                ))}
+              </div>
+              <p className="col-span-2 text-xs text-muted">
+                {sizing === 'fit'
+                  ? 'The message is drawn as large as the area allows; the number of people is calculated from it.'
+                  : 'The message is sized for this many people; the area only has to contain it.'}
+              </p>
+              {sizing === 'count' && (
+                <Field label="Human pixels"><Input type="number" min={1} max={250000} value={count} onChange={(e) => setCount(Math.min(250000, Math.max(1, Number(e.target.value))))} /></Field>
+              )}
+              <Field label="Target spacing (m)" hint={sizing === 'fit' ? 'Sets the head count' : 'Drives the size'}>
+                <Input type="number" min={minSpacing} max={10} step={0.1} value={targetSpacing} onChange={(e) => { setTargetSpacing(Number(e.target.value)); if (sizing === 'count') setWidthOverride(null); }} />
+              </Field>
+              <Field label="Width (m)" hint={widthOverride != null ? 'manual' : sizing === 'fit' ? 'fitted to the area' : 'auto'}>
+                <Input
+                  type="number"
+                  min={5}
+                  placeholder={sizing === 'fit' ? (result ? String(Math.round(result.widthM)) : 'auto') : ''}
+                  value={widthOverride ?? (sizing === 'count' ? width || '' : '')}
+                  onChange={(e) => setWidthOverride(Number(e.target.value) || null)}
+                />
+              </Field>
+              <Field label="Height (m)"><Input disabled value={sizing === 'fit' && widthOverride == null ? (result ? Math.round(result.heightM) : '') : height || ''} /></Field>
               <Field label={`Rotation ${rotation}°`} className="col-span-2">
                 <input type="range" min={-180} max={180} value={rotation} onChange={(e) => setRotation(Number(e.target.value))} className="w-full accent-[var(--hp-pixel)]" />
               </Field>
@@ -234,7 +263,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
               <Button size="sm" variant="ghost" icon={<Dices size={14} />} onClick={() => setSeed(randomSeed())}>Seed {seed}</Button>
             </div>
             <div className="mt-4 flex gap-2">
-              <Button variant="primary" icon={<Wand2 size={16} />} disabled={!editable || !mask || !anchor || !width || noPerimeter || !!progress} onClick={generate}>Generate</Button>
+              <Button variant="primary" icon={<Wand2 size={16} />} disabled={!editable || !mask || !anchor || (sizing === 'count' && !width) || noPerimeter || !!progress} onClick={generate}>Generate</Button>
               {progress && <Button variant="ghost" onClick={() => cancelRef.current?.()}>Cancel</Button>}
             </div>
             {progress && (
@@ -269,11 +298,37 @@ export function FormationTab({ event, canEdit }: TabProps) {
               )}
               {save.error && <div className="mt-3"><Alert tone="bad">{(save.error as Error).message}</Alert></div>}
               {report && <ValidationReport report={report} />}
+              {savedId && !event.active_formation_id && result && (
+                <CapacityFromFormation eventId={event.id} formationId={savedId} pixels={result.points.length} current={event.capacity} />
+              )}
             </Card>
           )}
         </div>
       </div>
       <Versions formations={formations.data ?? []} activeId={event.active_formation_id} editable={editable} eventId={event.id} />
+    </div>
+  );
+}
+
+/** Before locking: adopt this version's pixel count as the registration capacity (so registration can open). */
+function CapacityFromFormation({ eventId, formationId, pixels, current }: { eventId: string; formationId: string; pixels: number; current: number | null }) {
+  const qc = useQueryClient();
+  const apply = useMutation({
+    mutationFn: () => rpc<number>('set_capacity_from_formation', { p_formation_id: formationId }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['event', eventId] }),
+  });
+  if (current === pixels) return <div className="mt-3"><Alert tone="ok">Registration capacity: {pixels.toLocaleString()} (this design).</Alert></div>;
+  return (
+    <div className="mt-4 rounded-xl border border-pixel/40 bg-pixel/5 p-4 text-sm">
+      <p>
+        This design needs <span className="hp-digits text-text">{pixels.toLocaleString()}</span> people.
+        {current == null ? ' The event has no capacity yet.' : ` Current capacity: ${current.toLocaleString()}.`}
+      </p>
+      <p className="mt-1 text-xs text-muted">Locking the version also sets it automatically. Setting it now lets you open registration while the design stays editable.</p>
+      <div className="mt-3">
+        <Button size="sm" variant="primary" busy={apply.isPending} onClick={() => apply.mutate()}>Use {pixels.toLocaleString()} as capacity</Button>
+      </div>
+      {apply.error && <div className="mt-2"><Alert tone="bad">{(apply.error as Error).message}</Alert></div>}
     </div>
   );
 }
@@ -429,7 +484,7 @@ function Versions({ formations, activeId, editable, eventId }: { formations: For
       >
         <div className="space-y-3 text-sm">
           <p>This version becomes the event's formation. Every registered participant is assigned a pixel in one transaction; if another version was active, everyone is remapped and phones refresh automatically.</p>
-          <p className="text-muted">Constraint areas (perimeter, exclusions…) are frozen while a formation is locked.</p>
+          <p className="text-muted">Registration capacity becomes {confirm?.point_count.toLocaleString()} (one person per pixel). Constraint areas (perimeter, exclusions…) are frozen while a formation is locked.</p>
           {lock.error && <Alert tone="bad">{(lock.error as Error).message}</Alert>}
           {lock.data && <Alert tone="ok">Assigned {lock.data.assigned.toLocaleString()} · waitlisted {lock.data.waitlisted.toLocaleString()}</Alert>}
         </div>

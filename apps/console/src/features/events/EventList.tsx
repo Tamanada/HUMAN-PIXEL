@@ -57,7 +57,7 @@ export function EventList() {
               <p className="mt-1 text-sm text-muted">{orgName(e.org_id)}{e.venue_name ? ` · ${e.venue_name}` : ''}</p>
               <div className="mt-5 flex items-end justify-between">
                 <p className="text-sm">{fmtDateTime(e.starts_at, e.timezone)}</p>
-                <p className="hp-digits text-sm"><span className="text-text">{(e.event_counters?.registered ?? 0).toLocaleString()}</span><span className="text-muted"> / {e.capacity.toLocaleString()}</span></p>
+                <p className="hp-digits text-sm"><span className="text-text">{(e.event_counters?.registered ?? 0).toLocaleString()}</span><span className="text-muted"> / {e.capacity != null ? e.capacity.toLocaleString() : 'size TBD'}</span></p>
               </div>
             </Link>
           ))}
@@ -76,7 +76,6 @@ function CreateEventModal({ open, onClose }: { open: boolean; onClose: () => voi
   const [name, setName] = useState('');
   const [tz, setTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [start, setStart] = useState('');
-  const [capacity, setCapacity] = useState(12000);
   const [venue, setVenue] = useState('');
 
   const create = useMutation({
@@ -86,7 +85,7 @@ function CreateEventModal({ open, onClose }: { open: boolean; onClose: () => voi
         p_name: name,
         p_starts_at: start ? zonedLocalToIso(start, tz) : null,
         p_timezone: tz,
-        p_capacity: capacity,
+        p_capacity: null,
         p_venue_name: venue || null,
         p_center_lat: null,
         p_center_lng: null,
@@ -122,9 +121,9 @@ function CreateEventModal({ open, onClose }: { open: boolean; onClose: () => voi
           </Field>
           <Field label="Formation start (event time)"><Input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
         </div>
-        <Field label="Participants (capacity)" hint="Target number of human pixels. Your plan may limit this.">
-          <Input type="number" min={1} max={250000} value={capacity} onChange={(e) => setCapacity(Number(e.target.value))} />
-        </Field>
+        <p className="rounded-lg bg-bg px-3 py-2 text-xs text-muted">
+          No head count yet: draw the surface next, then design the message. The number of human pixels, and so the registration capacity, is calculated from them.
+        </p>
         {create.error && <Alert tone="bad">{(create.error as Error).message}</Alert>}
       </form>
     </Modal>

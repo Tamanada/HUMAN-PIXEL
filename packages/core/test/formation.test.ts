@@ -4,7 +4,10 @@ import {
   LocalFrame,
   createMask,
   fillEllipse,
+  fitDesignWidth,
   generateFormation,
+  hexPeople,
+  surfaceCapacity,
   haversineDistance,
   nearestNeighbourStats,
   pointInPolygon,
@@ -196,5 +199,47 @@ describe('upload wire format', () => {
     const rows = toPointRows(r.points);
     expect(rows[0]).toHaveLength(8);
     expect(pointsChecksum(rows.map((row) => ({ idx: row[0], label: row[7] })))).toBe(pointsChecksum(r.points));
+  });
+});
+
+describe('sizing from the surface (capacity is an output)', () => {
+  const bar = createMask(400, 100);
+  for (let y = 0; y < 100; y++) for (let x = 0; x < 400; x++) bar.data[y * 400 + x] = 255;
+
+  it('surface capacity: area minus buffered exclusions, hex packing', () => {
+    const cap = surfaceCapacity({ perimeter: rect(200, 100), formationArea: null, exclusions: [{ polygon: rect(10, 10), bufferM: 5 }] }, [1.3])!;
+    // 20 000 m² − (20 m square with rounded corners ≈ 400 − (4 − π)·25 ≈ 379 m²)
+    expect(cap.usableAreaM2).toBeGreaterThan(19_560);
+    expect(cap.usableAreaM2).toBeLessThan(19_700);
+    expect(cap.bySpacing[0]!.people).toBe(hexPeople(cap.usableAreaM2, 1.3));
+    expect(surfaceCapacity({ perimeter: null, formationArea: null, exclusions: [] })).toBeNull();
+  });
+
+  it('fits the design to the largest width inside the area', () => {
+    const w = fitDesignWidth({ mask: bar, anchor: ANCHOR, perimeter: rect(300, 300) });
+    // A 4:1 bar in a 300 m square is limited by width: ≈ 300 m minus the 3 % margin.
+    expect(w).toBeGreaterThan(280);
+    expect(w).toBeLessThanOrEqual(300);
+    // Rotated 90°, the same bar is still limited to 300 m.
+    const r = fitDesignWidth({ mask: bar, anchor: ANCHOR, perimeter: rect(300, 300), rotationDeg: 90 });
+    expect(Math.abs(r - w)).toBeLessThan(10);
+    expect(() => fitDesignWidth({ mask: bar, anchor: ANCHOR, perimeter: rect(50, 50, 500, 500) })).toThrow(FormationError);
+  });
+
+  it('an exclusion inside the area removes pixels but does not shrink the fitted design', () => {
+    const rock = [{ polygon: rect(20, 20, 30, 0), bufferM: 3 }];
+    const r = generateFormation({ mask: bar, anchor: ANCHOR, targetSpacingM: 1.5, perimeter: rect(300, 300), exclusions: rock, seed: 1 });
+    expect(r.widthM).toBeGreaterThan(280);
+    expect(r.metrics.clippedFraction).toBeGreaterThan(0);
+  });
+
+  it('derives the head count from spacing and fits the surface', () => {
+    const r = generateFormation({ mask: bar, anchor: ANCHOR, targetSpacingM: 1.5, perimeter: rect(120, 120), seed: 3 });
+    const area = r.widthM * r.heightM;
+    // A solid bar: head count ≈ its area in a 1.5 m hex packing.
+    expect(r.points.length).toBeGreaterThan(hexPeople(area, 1.5) * 0.9);
+    expect(r.points.length).toBeLessThan(hexPeople(area, 1.5) * 1.1);
+    expect(r.metrics.clippedFraction).toBeLessThan(0.01);
+    assertInvariants(r, r.points.length, 0.9);
   });
 });
