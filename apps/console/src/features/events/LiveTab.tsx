@@ -98,7 +98,7 @@ export function LiveTab({ event, canEdit }: TabProps) {
       <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
         <Card title="Secret formation · live" actions={<Badge tone="pixel">organizer only</Badge>} padded={false}>
           <div className="p-3">
-            {event.active_formation_id ? <MapView areas={areas.data ?? []} points={layer} height={520} /> : <Alert>No locked formation yet.</Alert>}
+            {event.active_formation_id ? <MapView areas={areas.data ?? []} points={layer} height={520} bearingKey={event.id} /> : <Alert>No locked formation yet.</Alert>}
             <div className="mt-3 flex flex-wrap gap-3 px-1 text-xs text-muted">
               {LEGEND.map(([k, l]) => (
                 <span key={k} className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: PALETTE[k] }} />{l}</span>

@@ -92,6 +92,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
           onMapClick={onMapClick}
           height={620}
           defaultSatellite
+          bearingKey={event.id}
         />
         {placingCenter && <Alert>Click the map to set the event center (used as the default formation anchor).</Alert>}
         {error && <Alert tone="bad">{(error as Error).message}</Alert>}

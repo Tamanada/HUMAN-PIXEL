@@ -4,7 +4,7 @@ import { Dices, Lock, Sparkles, Upload, Wand2 } from 'lucide-react';
 import { formationEditable, randomSeed, type FormationResult, type FormationStage, type Mask } from '@human-pixel/core';
 import { ensureFontLoaded, maskToRgba, renderImageMask, renderTextMask } from '@human-pixel/core/formation-browser';
 import { Alert, Badge, Button, Card, Field, Input, Modal, Select, Stat, Textarea } from '../../components/ui';
-import { MapView, type PointsLayer } from '../../components/MapView';
+import { MapView, readBearing, type PointsLayer } from '../../components/MapView';
 import { rpc, supabase } from '../../lib/supabase';
 import type { FormationRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
@@ -76,7 +76,11 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [count, setCount] = useState(event.capacity ?? 5000);
   const [targetSpacing, setTargetSpacing] = useState(1.3);
   const [widthOverride, setWidthOverride] = useState<number | null>(null);
-  const [rotation, setRotation] = useState(0);
+  // Rotation is counter-clockwise; a map turned so the beach reads left→right has bearing b, so the
+  // message reads the same way on the ground at rotation −b. Default: follow the saved map view.
+  const [viewBearing, setViewBearing] = useState(() => readBearing(event.id));
+  const alignedRotation = Math.round(-(((viewBearing + 180) % 360 + 360) % 360 - 180));
+  const [rotation, setRotation] = useState(alignedRotation);
   const [minSpacing, setMinSpacing] = useState(0.9);
   const [zoneSize, setZoneSize] = useState(1500);
   const [seed, setSeed] = useState(() => randomSeed());
@@ -251,8 +255,15 @@ export function FormationTab({ event, canEdit }: TabProps) {
                 />
               </Field>
               <Field label="Height (m)"><Input disabled value={sizing === 'fit' && widthOverride == null ? (result ? Math.round(result.heightM) : '') : height || ''} /></Field>
-              <Field label={`Rotation ${rotation}°`} className="col-span-2">
+              <Field
+                label={`Rotation ${rotation}°`}
+                className="col-span-2"
+                hint={rotation === alignedRotation ? 'Reads left→right in the map view.' : undefined}
+              >
                 <input type="range" min={-180} max={180} value={rotation} onChange={(e) => setRotation(Number(e.target.value))} className="w-full accent-[var(--hp-pixel)]" />
+                {rotation !== alignedRotation && (
+                  <Button size="sm" variant="ghost" onClick={() => setRotation(alignedRotation)}>Align with the map view ({alignedRotation}°)</Button>
+                )}
               </Field>
               <Field label="Min. spacing (m)" hint="Crowd safety floor"><Input type="number" min={0.6} max={5} step={0.05} value={minSpacing} onChange={(e) => setMinSpacing(Number(e.target.value))} /></Field>
               <Field label="People per zone"><Input type="number" min={100} max={20000} step={100} value={zoneSize} onChange={(e) => setZoneSize(Number(e.target.value))} /></Field>
@@ -283,6 +294,8 @@ export function FormationTab({ event, canEdit }: TabProps) {
             center={anchor}
             height={440}
             onMapClick={placingAnchor ? (p) => (setAnchor(p), setPlacingAnchor(false)) : undefined}
+            bearingKey={event.id}
+            onBearingChange={setViewBearing}
           />
           {result && <ResultPanel result={result} />}
           {result && editable && (
@@ -464,7 +477,7 @@ function Versions({ formations, activeId, editable, eventId }: { formations: For
               </div>
               {view === f.id && pts.data && (
                 <div className="w-full pt-2">
-                  <MapView points={{ lat: pts.data.lat, lng: pts.data.lng }} height={360} />
+                  <MapView points={{ lat: pts.data.lat, lng: pts.data.lng }} height={360} bearingKey={eventId} />
                 </div>
               )}
             </li>

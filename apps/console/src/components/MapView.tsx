@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { GeoJSONSource, LngLatLike, Map as MlMap } from 'maplibre-gl';
-import { Layers } from 'lucide-react';
+import { Layers, RotateCcw, RotateCw } from 'lucide-react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { config } from '../lib/supabase';
 import type { AreaRow } from '../lib/types';
 
@@ -42,17 +43,43 @@ interface Props {
   onMapClick?: (lngLat: { lat: number; lng: number }) => void;
   /** Start on satellite imagery (drawing the ground needs to see it). */
   defaultSatellite?: boolean;
+  /** Remember and share the map orientation under this key (the event id). */
+  bearingKey?: string;
+  onBearingChange?: (deg: number) => void;
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-export function MapView({ areas = [], points, center, draw, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false }: Props) {
+/** Map orientation per event (degrees clockwise from north at the top of the screen), shared by every tab. */
+export function readBearing(key: string | undefined): number {
+  if (!key) return 0;
+  try {
+    const v = Number(localStorage.getItem(`hp.mapBearing.${key}`));
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+function writeBearing(key: string | undefined, deg: number) {
+  if (!key) return;
+  try {
+    localStorage.setItem(`hp.mapBearing.${key}`, String(Math.round(deg * 10) / 10));
+  } catch {
+    /* private mode: orientation is simply not remembered */
+  }
+}
+const norm180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
+
+export function MapView({ areas = [], points, center, draw, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, bearingKey, onBearingChange }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
   const [satellite, setSatellite] = useState(defaultSatellite && !!config.satelliteTiles);
   const drawState = useRef<{ coords: [number, number][] }>({ coords: [] });
   const fitted = useRef(false);
+  const [bearing, setBearing] = useState(() => readBearing(bearingKey));
+  const bearingCb = useRef(onBearingChange);
+  bearingCb.current = onBearingChange;
 
   // Init once.
   useEffect(() => {
@@ -64,6 +91,7 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       zoom: center ? 16 : 3,
       attributionControl: { compact: true },
       maxZoom: 22,
+      bearing: readBearing(bearingKey),
     });
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
@@ -102,6 +130,12 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       m.addLayer({ id: 'draft-pts', type: 'circle', source: 'draft', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': 4, 'circle-color': '#fff' } });
       setReady(true);
     });
+    // Rotate: right-click drag / Ctrl+drag (built in), two fingers, or the ↺ ↻ buttons.
+    m.on('rotate', () => setBearing(m.getBearing()));
+    m.on('rotateend', () => {
+      writeBearing(bearingKey, m.getBearing());
+      bearingCb.current?.(m.getBearing());
+    });
     map.current = m;
     if (import.meta.env.DEV) (window as unknown as { __hpMap?: MlMap }).__hpMap = m;
     return () => {
@@ -129,7 +163,7 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
       const b = new maplibregl.LngLatBounds();
       for (const a of areas) visitCoords(a.geom, (c) => b.extend(c as LngLatLike));
       if (!b.isEmpty()) {
-        m.fitBounds(b, { padding: 60, duration: 0, maxZoom: 18 });
+        m.fitBounds(b, { padding: 60, duration: 0, maxZoom: 18, bearing: m.getBearing() });
         fitted.current = true;
       }
     }
@@ -155,7 +189,7 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
     if (!fitted.current && n) {
       const b = new maplibregl.LngLatBounds();
       for (let i = 0; i < n; i += Math.max(1, Math.floor(n / 500))) b.extend([points.lng[i]!, points.lat[i]!]);
-      m.fitBounds(b, { padding: 60, duration: 0, maxZoom: 19 });
+      m.fitBounds(b, { padding: 60, duration: 0, maxZoom: 19, bearing: m.getBearing() });
       fitted.current = true;
     }
   }, [points, ready]);
@@ -238,6 +272,13 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
     };
   }, [draw, ready, onAreaClick, onMapClick]);
 
+  const rotateTo = (deg: number) => {
+    const m = map.current;
+    if (!m) return;
+    m.rotateTo(norm180(deg), { duration: 250 });
+  };
+  const step = (e: ReactMouseEvent) => (e.shiftKey ? 1 : 5);
+
   return (
     <div className="relative overflow-hidden rounded-2xl border border-line" style={{ height }}>
       {/* Inline, not a class: maplibre-gl.css (unlayered) sets .maplibregl-map { position: relative },
@@ -251,6 +292,15 @@ export function MapView({ areas = [], points, center, draw, height = 520, select
           <Layers size={14} /> {satellite ? 'Map' : 'Satellite'}
         </button>
       )}
+      <div
+        className="absolute left-3 flex items-center gap-0.5 rounded-lg border border-line bg-surface/90 p-0.5 text-xs backdrop-blur"
+        style={{ top: config.satelliteTiles ? 48 : 12 }}
+        title="Rotate the map: buttons (Shift = 1°), right-click drag, or Ctrl + drag"
+      >
+        <button aria-label="Rotate left" onClick={(e) => rotateTo(bearing - step(e))} className="rounded-md p-1.5 hover:bg-surface-2"><RotateCcw size={14} /></button>
+        <button aria-label="Reset to north" onClick={() => rotateTo(0)} className="hp-digits min-w-12 rounded-md px-1.5 py-1 hover:bg-surface-2">{Math.round(norm180(bearing))}°</button>
+        <button aria-label="Rotate right" onClick={(e) => rotateTo(bearing + step(e))} className="rounded-md p-1.5 hover:bg-surface-2"><RotateCw size={14} /></button>
+      </div>
       {draw && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg border border-line bg-surface/95 px-3 py-2 text-xs backdrop-blur">
           {draw.kind === 'polygon' ? 'Click to add corners · double-click or Enter to finish · Backspace undo · Esc restart' : 'Click the map to place the point'}
