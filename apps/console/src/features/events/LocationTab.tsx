@@ -244,23 +244,16 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
         </Field>
         {area.kind === 'access_point' && canEdit && (
           <div className="flex flex-wrap gap-1.5">
-            {POINT_SYMBOLS.map((p) => {
-              const Icon = p.icon;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  title={p.norm}
-                  onClick={() => (setName(p.label), setSymbol(p.id))}
-                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${symbol === p.id ? 'border-pixel bg-pixel/10 text-pixel' : 'border-line text-muted hover:border-muted hover:text-text'}`}
-                >
-                  <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ background: p.color }}>
-                    <Icon size={10} color={p.ink} strokeWidth={2.8} />
-                  </span>
-                  {p.label}
-                </button>
-              );
-            })}
+            {POINT_SYMBOLS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => (setName(p.label), setSymbol(p.id))}
+                className={`rounded-full border px-2.5 py-1 text-xs ${symbol === p.id ? 'border-pixel bg-pixel/10 text-pixel' : 'border-line text-muted hover:border-muted hover:text-text'}`}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
         )}
         {bufferMatters && (
