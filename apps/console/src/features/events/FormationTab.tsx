@@ -83,6 +83,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [rotation, setRotation] = useState(alignedRotation);
   // Fill mode: let the engine choose rotation + position so the message covers the most of the area.
   const [autoPlace, setAutoPlace] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const auto = sizing === 'fit' && autoPlace;
   const [minSpacing, setMinSpacing] = useState(0.9);
   const [zoneSize, setZoneSize] = useState(1500);
@@ -313,12 +314,22 @@ export function FormationTab({ event, canEdit }: TabProps) {
                 )}
               </Field>
               <Field label="Min. spacing (m)" hint="Crowd safety floor"><Input type="number" min={0.6} max={5} step={0.05} value={minSpacing} onChange={(e) => setMinSpacing(Number(e.target.value))} /></Field>
-              <Field
-                label="People per zone"
-                hint={`Marshalling only: splits the crowd into zones A, B, C… It never changes the number of pixels.${result ? ` Now ${result.zones.length} zone${result.zones.length > 1 ? 's' : ''}.` : ''}`}
-              >
-                <Input type="number" min={100} max={20000} step={100} value={zoneSize} onChange={(e) => setZoneSize(Number(e.target.value))} />
+              {/* Zones are marshalling groups (A, B, C…) of the SAME people: never extra participants. */}
+              <Field label="Zones" hint="Marshalling groups on the day, not extra people">
+                <Input disabled value={result ? `${result.zones.length} (${result.zones.map((z) => z.label).join(' ')})` : ''} placeholder="—" />
               </Field>
+              <div className="col-span-2">
+                <button type="button" onClick={() => setShowAdvanced((v) => !v)} className="text-xs text-muted underline hover:text-text">
+                  {showAdvanced ? 'Hide advanced' : 'Advanced: zone size'}
+                </button>
+                {showAdvanced && (
+                  <div className="mt-2">
+                    <Field label="People per zone" hint="How many people one marshal group holds. Only splits the crowd into zones A, B, C…; the pixel count never changes.">
+                      <Input type="number" min={100} max={20000} step={100} value={zoneSize} onChange={(e) => setZoneSize(Number(e.target.value))} />
+                    </Field>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
               <span>Anchor {anchor ? `${anchor.lat.toFixed(6)}, ${anchor.lng.toFixed(6)}` : 'not set'}</span>
