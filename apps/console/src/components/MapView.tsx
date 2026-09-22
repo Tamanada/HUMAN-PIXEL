@@ -220,7 +220,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         type: 'Feature',
         id: a.id,
         geometry: a.geom,
-        properties: { id: a.id, kind: a.kind, name: a.name ?? '', symbol: a.symbol ?? '', color: AREA_STYLE[a.kind].color, fill: AREA_STYLE[a.kind].fill, selected: a.id === selectedAreaId },
+        properties: { id: a.id, kind: a.kind, name: a.name ?? '', symbol: a.symbol ?? '', area: a.area_m2 ?? 0, color: AREA_STYLE[a.kind].color, fill: AREA_STYLE[a.kind].fill, selected: a.id === selectedAreaId },
       })),
     };
     (m.getSource('areas') as GeoJSONSource).setData(fc);
@@ -272,8 +272,8 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
 
   // Interaction: draw / click. Callbacks go through refs so a parent re-render never resets a
   // drawing in progress.
-  const cb = useRef({ onAreaClick, onMapClick, draw, edit });
-  cb.current = { onAreaClick, onMapClick, draw, edit };
+  const cb = useRef({ onAreaClick, onMapClick, draw, edit, selectedAreaId });
+  cb.current = { onAreaClick, onMapClick, draw, edit, selectedAreaId };
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
@@ -351,8 +351,8 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         render();
         return;
       }
-      const hit = m.queryRenderedFeatures(e.point, { layers: ['areas-symbol', 'areas-point', 'areas-fill'] })[0];
-      if (hit && cb.current.onAreaClick) cb.current.onAreaClick(String(hit.properties?.id));
+      const hit = pickArea(m, e.point, cb.current.selectedAreaId);
+      if (hit && cb.current.onAreaClick) cb.current.onAreaClick(hit);
       else cb.current.onMapClick?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     };
     const dbl = (e: maplibregl.MapMouseEvent) => {
@@ -618,6 +618,25 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       )}
     </div>
   );
+}
+
+/**
+ * Which zone a click means. Zones overlap (everything sits inside the perimeter), so: points first,
+ * then the SMALLEST zone under the cursor; clicking again on an already selected zone cycles to the
+ * next larger one below it (reach the perimeter under a formation area). A few pixels of tolerance
+ * make thin zones (corridors) and edges clickable.
+ */
+function pickArea(m: MlMap, pt: maplibregl.Point, selected: string | null | undefined): string | null {
+  const box: [maplibregl.PointLike, maplibregl.PointLike] = [[pt.x - 6, pt.y - 6], [pt.x + 6, pt.y + 6]];
+  const pts = m.queryRenderedFeatures(box, { layers: ['areas-symbol', 'areas-point'] });
+  if (pts.length) return String(pts[0]!.properties?.id);
+  const polys = m.queryRenderedFeatures(box, { layers: ['areas-fill', 'areas-line'] });
+  const seen = new Map<string, number>();
+  for (const f of polys) seen.set(String(f.properties?.id), Number(f.properties?.area) || Infinity);
+  const ordered = [...seen.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id);
+  if (!ordered.length) return null;
+  const i = selected ? ordered.indexOf(selected) : -1;
+  return i >= 0 ? ordered[(i + 1) % ordered.length]! : ordered[0]!;
 }
 
 function BarButton({ icon, children, onClick, disabled, title, primary }: { icon: ReactNode; children: ReactNode; onClick: () => void; disabled?: boolean; title?: string; primary?: boolean }) {
