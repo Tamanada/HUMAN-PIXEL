@@ -9,7 +9,7 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&ur
 import { Check, Layers, Lock, LockOpen, RotateCcw, RotateCw, Undo2, X } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { config } from '../lib/supabase';
-import { loadSymbolImages } from '../lib/symbols';
+import { loadSymbolImages, SYMBOL_DRAG_TYPE } from '../lib/symbols';
 import type { AreaRow } from '../lib/types';
 
 export const AREA_STYLE: Record<AreaRow['kind'], { color: string; label: string; fill: number }> = {
@@ -53,6 +53,10 @@ interface Props {
   message?: string | null;
   /** Remember and share the map orientation under this key (the event id). */
   bearingKey?: string;
+  /** A symbol pill was dropped on the map at this position. */
+  onDropSymbol?: (symbolId: string, at: { lat: number; lng: number }) => void;
+  /** A point (access point) was dragged to a new position. Omitted ⇒ points cannot be moved. */
+  onMovePoint?: (areaId: string, to: { lat: number; lng: number }) => void;
   onBearingChange?: (deg: number) => void;
 }
 
@@ -84,7 +88,7 @@ function writeBearing(key: string | undefined, deg: number) {
 }
 const norm180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 
-export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange }: Props) {
+export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange, onDropSymbol, onMovePoint }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
@@ -97,6 +101,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
   // Corners placed so far (drives the Undo / Finish buttons) and the actions of the active tool.
   const [draftCount, setDraftCount] = useState(0);
   const [editDepth, setEditDepth] = useState(0);
+  const [dropping, setDropping] = useState(false);
   const actions = useRef<{ undo?: () => void; cancel?: () => void; finish?: () => void; save?: () => void }>({});
   // Locked: the view cannot move at all (no pan, zoom, rotate), so clicks only place corners.
   const [locked, setLocked] = useState(false);
@@ -546,6 +551,50 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit?.geom, ready]);
 
+  // Move a placed point: press on it and drag (only when no drawing or reshaping is in progress).
+  const moveCb = useRef(onMovePoint);
+  moveCb.current = onMovePoint;
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    const src = m.getSource('areas') as GeoJSONSource;
+    let moving: { id: string; fc: GeoJSON.FeatureCollection; feature: GeoJSON.Feature; from: maplibregl.Point } | null = null;
+    const down = (e: maplibregl.MapMouseEvent) => {
+      if (!moveCb.current || cb.current.draw || cb.current.edit || e.originalEvent.button !== 0) return;
+      const box: [maplibregl.PointLike, maplibregl.PointLike] = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
+      const hit = m.queryRenderedFeatures(box, { layers: ['areas-symbol', 'areas-point'] })[0];
+      if (!hit) return;
+      e.preventDefault(); // the map stays still while the point moves
+      const id = String(hit.properties?.id);
+      const fc = structuredClone((src as unknown as { _data: { geojson: GeoJSON.FeatureCollection } })._data.geojson);
+      const feature = fc.features.find((f) => f.properties?.id === id);
+      if (!feature) return;
+      moving = { id, fc, feature, from: e.point };
+      m.getCanvas().style.cursor = 'grabbing';
+    };
+    const move = (e: maplibregl.MapMouseEvent) => {
+      if (!moving) return;
+      moving.feature.geometry = { type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] };
+      src.setData(moving.fc);
+    };
+    const up = (e: maplibregl.MapMouseEvent) => {
+      if (!moving) return;
+      const { id, from } = moving;
+      moving = null;
+      m.getCanvas().style.cursor = '';
+      // A plain click (no real drag) only selects the point.
+      if (Math.hypot(e.point.x - from.x, e.point.y - from.y) > 3) moveCb.current?.(id, { lat: e.lngLat.lat, lng: e.lngLat.lng });
+    };
+    m.on('mousedown', down);
+    m.on('mousemove', move);
+    m.on('mouseup', up);
+    return () => {
+      m.off('mousedown', down);
+      m.off('mousemove', move);
+      m.off('mouseup', up);
+    };
+  }, [ready]);
+
   // Which gestures move the view: none when locked; in freehand the left drag draws instead of panning.
   useEffect(() => {
     const m = map.current;
@@ -570,7 +619,29 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
   const step = (e: ReactMouseEvent) => (e.shiftKey ? 1 : 5);
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-line" style={{ height }}>
+    <div
+      className={`relative overflow-hidden rounded-2xl border ${dropping ? 'border-pixel' : 'border-line'}`}
+      style={{ height }}
+      onDragOver={(e) => {
+        if (!onDropSymbol || !e.dataTransfer.types.includes(SYMBOL_DRAG_TYPE)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        if (!dropping) setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => {
+        setDropping(false);
+        const id = e.dataTransfer.getData(SYMBOL_DRAG_TYPE);
+        const mm = map.current;
+        if (!id || !mm || !onDropSymbol) return;
+        e.preventDefault();
+        const rect = mm.getCanvas().getBoundingClientRect();
+        const ll = mm.unproject([e.clientX - rect.left, e.clientY - rect.top]);
+        onDropSymbol(id, { lat: ll.lat, lng: ll.lng });
+      }}
+    >
       {/* Inline, not a class: maplibre-gl.css (unlayered) sets .maplibregl-map { position: relative },
           which beats Tailwind's layered utilities and would collapse the map to 0 px height. */}
       <div ref={el} style={{ position: 'absolute', inset: 0 }} />
@@ -601,6 +672,11 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         <button disabled={locked} aria-label="Reset to north" onClick={() => rotateTo(0)} className="hp-digits min-w-12 rounded-md px-1.5 py-1 hover:bg-surface-2 disabled:opacity-60">{Math.round(norm180(bearing))}°</button>
         <button disabled={locked} aria-label="Rotate right" onClick={(e) => rotateTo(bearing + step(e))} className="rounded-md p-1.5 hover:bg-surface-2 disabled:opacity-40"><RotateCw size={14} /></button>
       </div>
+      {dropping && (
+        <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-lg border border-pixel bg-surface/95 px-3 py-1.5 text-xs backdrop-blur">
+          Drop to place the point here
+        </div>
+      )}
       {(draw || edit || message) && (
         <div className="absolute bottom-3 left-1/2 flex w-[min(92%,560px)] -translate-x-1/2 flex-col items-center gap-2">
           {message && <div role="alert" className="w-full rounded-lg border border-bad/60 bg-surface/95 px-3 py-2 text-xs text-bad backdrop-blur">{message}</div>}

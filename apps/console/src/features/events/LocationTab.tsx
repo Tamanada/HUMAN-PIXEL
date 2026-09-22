@@ -10,7 +10,7 @@ import type { AreaRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
 import { constraintsFromAreas } from './formationClient';
 import { useAreas } from './hooks';
-import { POINT_SYMBOLS, symbolOf } from '../../lib/symbols';
+import { POINT_SYMBOLS, SymbolPill, symbolOf } from '../../lib/symbols';
 
 const TOOLS: { kind: AreaRow['kind']; shape: 'polygon' | 'point'; help: string }[] = [
   { kind: 'perimeter', shape: 'polygon', help: 'The whole event ground. Required. Every pixel must be inside.' },
@@ -20,7 +20,6 @@ const TOOLS: { kind: AreaRow['kind']; shape: 'polygon' | 'point'; help: string }
   { kind: 'emergency', shape: 'polygon', help: 'Emergency corridors that must stay clear. Excluded from the formation.' },
   { kind: 'assembly', shape: 'polygon', help: 'Where people gather before walking to their pixel.' },
   { kind: 'entry_zone', shape: 'polygon', help: 'Participant entry areas.' },
-  { kind: 'access_point', shape: 'point', help: 'Entrances, first aid, staff points.' },
 ];
 
 export function LocationTab({ event, canEdit }: TabProps) {
@@ -125,6 +124,23 @@ export function LocationTab({ event, canEdit }: TabProps) {
           defaultSatellite
           message={error ? (error as Error).message.replace(/^INVALID_GEOMETRY: /, '').replace(/^\w/, (c) => c.toUpperCase()) : null}
           bearingKey={event.id}
+          onDropSymbol={
+            canEdit
+              ? (id, at) => {
+                  setTool(null);
+                  setEditingId(null);
+                  save.mutate({ kind: 'access_point', geom: { type: 'Point', coordinates: [at.lng, at.lat] }, name: symbolOf(id)?.label ?? null, symbol: id });
+                }
+              : undefined
+          }
+          onMovePoint={
+            canEdit
+              ? (id, to) => {
+                  const a = (areas.data ?? []).find((x) => x.id === id);
+                  if (a) save.mutate({ kind: a.kind, geom: { type: 'Point', coordinates: [to.lng, to.lat] }, id, name: a.name, buffer: a.safety_buffer_m, isPublic: a.is_public, symbol: a.symbol });
+                }
+              : undefined
+          }
         />
         </div>
         {placingCenter && <Alert>Click the map to set the event center (where the map opens when nothing is drawn yet).</Alert>}
@@ -153,6 +169,13 @@ export function LocationTab({ event, canEdit }: TabProps) {
                   </button>
                 );
               })}
+              <div className="rounded-xl border border-line p-3">
+                <span className="block text-sm font-medium">Access points</span>
+                <span className="mb-2.5 block text-xs text-muted">Drag a point onto the map. On the map, drag it to move it; click it to rename or delete.</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {POINT_SYMBOLS.map((p) => <SymbolPill key={p.id} symbol={p} draggable />)}
+                </div>
+              </div>
               <Button variant="ghost" size="sm" icon={<Crosshair size={14} />} onClick={() => setPlacingCenter((v) => !v)}>
                 {placingCenter ? 'Cancel' : 'Set event center'}
               </Button>
@@ -244,27 +267,9 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
         </Field>
         {area.kind === 'access_point' && canEdit && (
           <div className="flex flex-wrap gap-1.5">
-            {/* The organizer's layout (same pills, order, size), each in its ISO safety colour with its
-                pictogram; the chosen one is filled. */}
-            {POINT_SYMBOLS.map((p) => {
-              const Icon = p.icon;
-              const on = symbol === p.id;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  title={p.norm}
-                  onClick={() => (setName(p.label), setSymbol(p.id))}
-                  className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-text"
-                  style={on ? { background: p.color, borderColor: p.color, color: p.ink } : { borderColor: p.color }}
-                >
-                  <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ background: on ? 'transparent' : p.color }}>
-                    <Icon size={11} strokeWidth={2.8} color={p.ink} />
-                  </span>
-                  {p.label}
-                </button>
-              );
-            })}
+            {POINT_SYMBOLS.map((p) => (
+              <SymbolPill key={p.id} symbol={p} selected={symbol === p.id} onClick={() => (setName(p.label), setSymbol(p.id))} />
+            ))}
           </div>
         )}
         {bufferMatters && (

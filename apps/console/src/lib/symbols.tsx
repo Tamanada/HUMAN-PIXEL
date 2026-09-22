@@ -88,3 +88,30 @@ export async function loadSymbolImages(add: (id: string, img: HTMLImageElement) 
     ),
   );
 }
+
+/** MIME type used when a symbol pill is dragged onto the map. */
+export const SYMBOL_DRAG_TYPE = 'application/x-hp-symbol';
+
+/**
+ * The access-point pill: outline and logo in the symbol's safety colour, filled when selected.
+ * Used for choosing a type in the editor and, draggable, as the palette to drop points on the map.
+ */
+export function SymbolPill({ symbol: p, selected = false, draggable = false, onClick }: { symbol: PointSymbol; selected?: boolean; draggable?: boolean; onClick?: () => void }) {
+  const Icon = p.icon;
+  return (
+    <button
+      type="button"
+      title={draggable ? `Drag onto the map to place: ${p.label}` : p.norm}
+      draggable={draggable}
+      onDragStart={draggable ? (e) => (e.dataTransfer.setData(SYMBOL_DRAG_TYPE, p.id), (e.dataTransfer.effectAllowed = 'copy')) : undefined}
+      onClick={onClick}
+      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-text ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      style={selected ? { background: p.color, borderColor: p.color, color: p.ink } : { borderColor: p.color }}
+    >
+      <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ background: selected ? 'transparent' : p.color }}>
+        <Icon size={11} strokeWidth={2.8} color={p.ink} />
+      </span>
+      {p.label}
+    </button>
+  );
+}
