@@ -33,10 +33,16 @@ describe('security: the formation stays secret', () => {
 
   it('participants read ZERO rows of formations, points, zones, logs and other members', async () => {
     await asUser(pool, alice, async (c) => {
-      for (const table of ['formations', 'formation_points', 'formation_zones', 'formation_assets', 'assignment_log', 'events', 'event_areas', 'event_state_history', 'event_stat_snapshots']) {
+      for (const table of ['formations', 'formation_assets', 'events', 'event_areas', 'event_state_history', 'event_stat_snapshots']) {
         const r = await c.query(`select count(*)::int n from public.${table}`);
         expect(r.rows[0].n, table).toBe(0);
       }
+    });
+    // The formation's geometry is not even addressable by clients (no table privilege at all).
+    for (const table of ['formation_points', 'formation_zones', 'assignment_log']) {
+      await expectError(asUser(pool, alice, (c) => c.query(`select count(*) from public.${table}`)), /permission denied/);
+    }
+    await asUser(pool, alice, async (c) => {
       const members = await c.query('select user_id from public.event_members');
       expect(members.rows.map((r) => r.user_id)).toEqual([alice.id]);
       const statuses = await c.query('select count(*)::int n from public.participant_status');
@@ -95,9 +101,22 @@ describe('security: the formation stays secret', () => {
     await rpc(pool, other!, 'create_organization', ['Rival Org']);
     await asUser(pool, other!, async (c) => {
       expect((await c.query('select count(*)::int n from public.events where id = $1', [s.eventId])).rows[0].n).toBe(0);
-      expect((await c.query('select count(*)::int n from public.formation_points where formation_id = $1', [s.formationId])).rows[0].n).toBe(0);
     });
     await expectError(rpc(pool, other!, 'get_formation_points', [s.formationId]), /FORBIDDEN/);
+  });
+
+  it('suspended organizers lose access; admins cannot demote owners', async () => {
+    await pool.query(`update public.profiles set is_suspended = true where id = $1`, [s.organizer.id]).catch(async () => {
+      await pool.query(`begin; select set_config('hp.internal','on',true); update public.profiles set is_suspended = true where id = '${s.organizer.id}'; commit;`);
+    });
+    await asUser(pool, s.organizer, async (c) => {
+      expect((await c.query('select count(*)::int n from public.events where id = $1', [s.eventId])).rows[0].n).toBe(0);
+    });
+    await pool.query(`begin; select set_config('hp.internal','on',true); update public.profiles set is_suspended = false where id = '${s.organizer.id}'; commit;`);
+    const [admin] = await createUsers(pool, 1, 'org-admin');
+    await pool.query(`insert into public.organization_members (org_id, user_id, role) values ($1, $2, 'admin')`, [s.orgId, admin!.id]);
+    await expectError(rpc(pool, admin!, 'add_organization_member', [s.orgId, s.organizer.email, 'member']), /FORBIDDEN/);
+    await expectError(rpc(pool, admin!, 'remove_organization_member', [s.orgId, s.organizer.id]), /FORBIDDEN/);
   });
 
   it('constraint areas are frozen once a formation is locked', async () => {

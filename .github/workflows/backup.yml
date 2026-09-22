@@ -1,0 +1,38 @@
+name: Nightly logical backup
+
+# Complements Supabase Point-in-Time Recovery (production) with an independent, encrypted,
+# provider-agnostic dump. Restore procedure: docs/OPERATIONS.md#restore.
+
+on:
+  schedule:
+    - cron: '17 19 * * *' # 02:17 Asia/Bangkok
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Install PostgreSQL client 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -so /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+      - name: Dump, compress, encrypt (AES-256, passphrase from secrets)
+        run: |
+          set -euo pipefail
+          file="human-pixel-$(date -u +%Y%m%dT%H%M%SZ).dump.gz.enc"
+          pg_dump "$DATABASE_URL" --format=custom --no-owner --schema=public --schema=auth --schema=storage \
+            | gzip -9 \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_PASSPHRASE -out "$file"
+          ls -lh "$file"
+          echo "FILE=$file" >> "$GITHUB_ENV"
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FILE }}
+          path: ${{ env.FILE }}
+          retention-days: 35

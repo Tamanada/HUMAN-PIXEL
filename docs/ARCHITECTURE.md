@@ -25,10 +25,8 @@ owner's other projects).
                          │ Supabase                                     │
                          │  Postgres 15 + PostGIS + pg_cron             │
                          │  RLS on every table, SECURITY DEFINER RPCs   │
-                         │  Edge Functions: time, event-control,        │
-                         │                  account-delete              │
-                         │  Storage: manifests (public, CDN-cached)     │
-                         │           event-photos (private, RLS)        │
+                         │  Edge Functions: time, account-delete        │
+                         │  Storage: event-photos (private, RLS)        │
                          │           formation-assets (private)         │
                          └───────────────▲──────────────────────────────┘
       join / assignment (once)           │         status transitions only
@@ -38,7 +36,7 @@ owner's other projects).
                          │  • GPS, distance, bearing, tolerance: LOCAL  │
                          │  • countdown from synced clock: LOCAL        │
                          │  • offline bundle + outbox                   │
-                         │  • polls CDN manifest (never the DB)         │
+                         │  • polls CDN manifest (Netlify durable cache)│
                          └──────────────────────────────────────────────┘
 ```
 
@@ -59,8 +57,8 @@ Packages:
 | Walking to position | 12k × 1 GPS/s = 12,000 writes/s | 0. GPS never leaves the phone. |
 | Status | – | ≤ ~8 coalesced transitions per participant per event, min 5 s apart, idempotent by `seq`. 12k participants over a 45 min positioning window ≈ 35 writes/s average. |
 | Countdown | server broadcast to 12k sockets | 0. Each phone computes `serverNow = Date.now() + offset`. |
-| T-0 (start) | 12k requests at the same instant | 0. The outbox is **quiet** from T-30 s to T+90 s and then flushes with random jitter. |
-| Event state changes | Realtime to 12k sockets (above default quotas) | Public manifest JSON in Storage behind CDN, `Cache-Control: max-age=15`; phones poll with jitter. Origin load is independent of crowd size. |
+| T-0 (start) | 12k requests at the same instant | 0. The outbox is **quiet** from T-30 s to T+150 s, then each phone flushes at its own random offset within 5 minutes (the simulation caught a synchronized `COMPLETED` burst before this window was widened). |
+| Event state changes | Realtime to 12k sockets (above default quotas) | Public manifest (`get_event_manifest`, secrets-free) served by a Netlify Function with durable CDN caching (`s-maxage=10, stale-while-revalidate=60`); phones poll with jitter (10 min → 30 s as T-0 approaches, silent from T-60 s to T+150 s). Origin load is independent of crowd size. Fallback: direct RPC. |
 | Dashboard | Realtime per participant row change | 1 aggregate RPC every 5 s per organizer (indexed `GROUP BY` over ≤ 50k rows ≈ ms). |
 
 Additional protections: per-user rate limits on join/report RPCs (`rate_limits` table), idempotent
@@ -122,7 +120,7 @@ event-scoped). Free points are claimed with `FOR UPDATE SKIP LOCKED` ordered by
 ```
 DRAFT → REGISTRATION_OPEN ⇄ REGISTRATION_CLOSED → EVENT_PREPARATION → PARTICIPANT_NAVIGATION
   → POSITIONING ⇄ READY → LIVE → PHOTO_CAPTURED → PHOTO_PROCESSING → PHOTO_RELEASED → COMPLETED
-(PARTICIPANT_NAVIGATION ⇄ POSITIONING allowed; any non-terminal state → CANCELLED)
+(PARTICIPANT_NAVIGATION ⇄ POSITIONING and POSITIONING → LIVE allowed; any pre-photo state → CANCELLED)
 ```
 
 The transition table is defined once in SQL (`event_state_transitions`) and mirrored in
@@ -161,7 +159,7 @@ LEFT_POSITION (outside radius × 1.25 for 8 s) → COMPLETED`. The hysteresis an
 smoothing absorb GPS jitter so the state doesn't flicker.
 
 Outbox: persisted, coalesces to the latest state, monotonic `seq`, min 5 s spacing, backoff with full
-jitter, quiet window around T-0. The server ignores `seq ≤ last_seq` (idempotent, replay-safe, multi-device safe).
+jitter, quiet window around T-0 (T-30 s → T+150 s, spread over 5 min). The server ignores `seq ≤ last_seq` (idempotent, replay-safe, multi-device safe).
 
 ## 9. Media
 
@@ -201,3 +199,21 @@ membership rows (evidence counts stay valid) and deletes the auth user. `purge_e
 - Secrets are only in the environment (`.env.local`, GitHub/Netlify/Supabase secrets). Never in source.
 
 See `docs/DEPLOYMENT.md` and `docs/OPERATIONS.md`.
+
+## 13. Measured results (2026-09-22, local Docker Postgres on a laptop)
+
+| Scenario | Result |
+|---|---|
+| Formation engine, 12,000 pixels (browser worker) | 0.6 s |
+| Formation engine, 50,000 pixels (Node) | ~2–3 s |
+| Upload + PostGIS validation, 12,000 points | 2.0 s |
+| Concurrent joins, 13,200 users on 12,000 positions (40 connections) | 0 duplicates, exact 1,200 waitlist, ~160 joins/s |
+| Status reports (12k participants, full lifecycle) | 468 reports/s sustained; the crowd simulation's peak need is ~78/s |
+| Reports per participant for a whole event (simulated GPS noise) | ~5.2 (vs ~1 per second with naive streaming) |
+| Participants in position at T-0 / false positives (simulation) | 99% / 0 |
+| Live dashboard aggregation at 12,000 participants | ~105 ms per 5 s poll |
+| Scheduler LIVE bookkeeping after T-0 | +3.6 s (phones switch locally at T-0) |
+
+Scaling notes for 50k+: join throughput is bounded by the per-event counters row (short lock,
+~ms): registration is spread over days in practice; for flash registrations of 50k+ move
+participant numbering to a sequence. All other paths are set-based or O(1) per participant.
