@@ -9,7 +9,7 @@ import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&ur
 import { Check, Layers, Lock, LockOpen, RotateCcw, RotateCw, Undo2, X } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { config } from '../lib/supabase';
-import { loadSymbolImages, SYMBOL_DRAG_TYPE } from '../lib/symbols';
+import { loadSymbolImages, SYMBOL_DRAG_TYPE, type PointSymbol } from '../lib/symbols';
 import type { AreaRow } from '../lib/types';
 
 export const AREA_STYLE: Record<AreaRow['kind'], { color: string; label: string; fill: number }> = {
@@ -57,6 +57,8 @@ interface Props {
   onDropSymbol?: (symbolId: string, at: { lat: number; lng: number }) => void;
   /** A point (access point) was dragged to a new position. Omitted ⇒ points cannot be moved. */
   onMovePoint?: (areaId: string, to: { lat: number; lng: number }) => void;
+  /** The event's custom point types, drawn with their colour and logo. */
+  customSymbols?: PointSymbol[];
   onBearingChange?: (deg: number) => void;
 }
 
@@ -88,7 +90,7 @@ function writeBearing(key: string | undefined, deg: number) {
 }
 const norm180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 
-export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange, onDropSymbol, onMovePoint }: Props) {
+export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange, onDropSymbol, onMovePoint, customSymbols }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
@@ -594,6 +596,16 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       m.off('mouseup', up);
     };
   }, [ready]);
+
+  // Custom types: (re)register their icons whenever the list changes (new colour, new logo).
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || !customSymbols?.length) return;
+    void loadSymbolImages((id, img) => {
+      if (m.hasImage(id)) m.updateImage(id, img);
+      else m.addImage(id, img, { pixelRatio: 2 });
+    }, customSymbols);
+  }, [customSymbols, ready]);
 
   // Which gestures move the view: none when locked; in freehand the left drag draws instead of panning.
   useEffect(() => {

@@ -1,16 +1,19 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Crosshair, PenLine, Trash2 } from 'lucide-react';
+import { Crosshair, ImagePlus, PenLine, Plus, Trash2 } from 'lucide-react';
 import { surfaceCapacity } from '@human-pixel/core';
-import { Alert, Badge, Button, Card, Field, Input, Toggle } from '../../components/ui';
+import { Alert, Badge, Button, Card, Field, Input, Modal, Toggle } from '../../components/ui';
 import { AREA_STYLE, MapView, type DrawMode, type EditMode } from '../../components/MapView';
 import { rpc, supabase } from '../../lib/supabase';
 import type { AreaRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
 import { constraintsFromAreas } from './formationClient';
-import { useAreas } from './hooks';
-import { POINT_SYMBOLS, SymbolPill, symbolOf } from '../../lib/symbols';
+import { useAreas, useEventSymbols } from './hooks';
+import { POINT_SYMBOLS, SAFETY, SymbolPill, customSymbol, imageToPngDataUrl, symbolOf, type PointSymbol } from '../../lib/symbols';
+
+/** A point dropped on the map but not saved yet (position and type can still change). */
+const PENDING_ID = '__pending__';
 
 const TOOLS: { kind: AreaRow['kind']; shape: 'polygon' | 'point'; help: string }[] = [
   { kind: 'perimeter', shape: 'polygon', help: 'The whole event ground. Required. Every pixel must be inside.' },
@@ -31,6 +34,11 @@ export function LocationTab({ event, canEdit }: TabProps) {
   // Just created: its editor opens at the top with the name field focused.
   const [justCreated, setJustCreated] = useState<string | null>(null);
   const [placingCenter, setPlacingCenter] = useState(false);
+  const [pending, setPending] = useState<{ symbol: string; lat: number; lng: number } | null>(null);
+  const [typeModal, setTypeModal] = useState(false);
+  const symbolsQ = useEventSymbols(event.id);
+  const customs = useMemo(() => (symbolsQ.data ?? []).map(customSymbol), [symbolsQ.data]);
+  const allSymbols = useMemo(() => [...POINT_SYMBOLS, ...customs], [customs]);
   const locked = !!event.active_formation_id;
   const frozenKinds = new Set(['perimeter', 'formation_area', 'exclusion', 'no_go', 'emergency']);
 
@@ -106,6 +114,18 @@ export function LocationTab({ event, canEdit }: TabProps) {
     [editing?.id, editing?.geom, save.isPending],
   );
   const error = save.error ?? remove.error ?? setCenter.error;
+  const pendingArea: AreaRow | null = pending
+    ? {
+        id: PENDING_ID,
+        event_id: event.id,
+        kind: 'access_point',
+        name: symbolOf(pending.symbol, allSymbols)?.label ?? null,
+        symbol: pending.symbol,
+        geom: { type: 'Point', coordinates: [pending.lng, pending.lat] },
+        safety_buffer_m: 0,
+        is_public: true,
+      }
+    : null;
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
@@ -113,12 +133,13 @@ export function LocationTab({ event, canEdit }: TabProps) {
       <div className="space-y-3 xl:sticky xl:top-4 xl:self-start">
         <div className="h-[620px] xl:h-[calc(100vh-2rem)]">
         <MapView
-          areas={(areas.data ?? []).filter((a) => a.id !== editingId)}
+          areas={[...(areas.data ?? []).filter((a) => a.id !== editingId), ...(pendingArea ? [pendingArea] : [])]}
+          customSymbols={customs}
           edit={edit}
           center={event.center_lat != null ? { lat: event.center_lat, lng: event.center_lng! } : null}
           draw={draw}
           selectedAreaId={selected}
-          onAreaClick={setSelected}
+          onAreaClick={(id) => id !== PENDING_ID && setSelected(id)}
           onMapClick={onMapClick}
           height="100%"
           defaultSatellite
@@ -127,15 +148,18 @@ export function LocationTab({ event, canEdit }: TabProps) {
           onDropSymbol={
             canEdit
               ? (id, at) => {
+                  // Not saved yet: adjust it (drag on the map, change type or name), then Save.
                   setTool(null);
                   setEditingId(null);
-                  save.mutate({ kind: 'access_point', geom: { type: 'Point', coordinates: [at.lng, at.lat] }, name: symbolOf(id)?.label ?? null, symbol: id });
+                  setSelected(null);
+                  setPending({ symbol: id, lat: at.lat, lng: at.lng });
                 }
               : undefined
           }
           onMovePoint={
             canEdit
               ? (id, to) => {
+                  if (id === PENDING_ID) return setPending((p) => p && { ...p, lat: to.lat, lng: to.lng });
                   const a = (areas.data ?? []).find((x) => x.id === id);
                   if (a) save.mutate({ kind: a.kind, geom: { type: 'Point', coordinates: [to.lng, to.lat] }, id, name: a.name, buffer: a.safety_buffer_m, isPublic: a.is_public, symbol: a.symbol });
                 }
@@ -146,7 +170,30 @@ export function LocationTab({ event, canEdit }: TabProps) {
         {placingCenter && <Alert>Click the map to set the event center (where the map opens when nothing is drawn yet).</Alert>}
       </div>
       <div className="space-y-4">
-        {sel && <AreaEditor key={sel.id} area={sel} autoFocusName={justCreated === sel.id} onClose={() => (setSelected(null), setJustCreated(null))} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
+        {pending && pendingArea && (
+          <AreaEditor
+            key={`pending-${pending.symbol}`}
+            area={pendingArea}
+            isNew
+            symbols={allSymbols}
+            onAddType={() => setTypeModal(true)}
+            canEdit={canEdit}
+            editing={false}
+            autoFocusName={false}
+            onClose={() => setPending(null)}
+            onEditShape={() => {}}
+            onSymbolChange={(id) => setPending((p) => p && { ...p, symbol: id })}
+            onSave={(p) =>
+              save.mutate(
+                { kind: 'access_point', geom: pendingArea.geom, name: p.name, isPublic: p.isPublic, symbol: p.symbol },
+                { onSuccess: () => (setPending(null), setSelected(null), setJustCreated(null)) },
+              )
+            }
+            onDelete={() => setPending(null)}
+            busy={save.isPending}
+          />
+        )}
+        {sel && !pending && <AreaEditor key={sel.id} area={sel} symbols={allSymbols} onAddType={() => setTypeModal(true)} autoFocusName={justCreated === sel.id} onClose={() => (setSelected(null), setJustCreated(null))} canEdit={canEdit && !(locked && frozenKinds.has(sel.kind))} editing={editingId === sel.id} onEditShape={() => (setTool(null), setEditingId(sel.id))} onSave={(p) => save.mutate({ ...p, kind: sel.kind, geom: sel.geom, id: sel.id })} onDelete={() => remove.mutate(sel.id)} busy={save.isPending || remove.isPending} />}
         <SurfaceCard areas={areas.data ?? []} eventId={event.id} />
         {locked && <Alert tone="warn">A formation is locked: perimeter, formation area, exclusions, no-go and emergency zones are frozen. Access, assembly and entry areas can still change.</Alert>}
         {canEdit && (
@@ -171,9 +218,10 @@ export function LocationTab({ event, canEdit }: TabProps) {
               })}
               <div className="rounded-xl border border-line p-3">
                 <span className="block text-sm font-medium">Access points</span>
-                <span className="mb-2.5 block text-xs text-muted">Drag a point onto the map. On the map, drag it to move it; click it to rename or delete.</span>
+                <span className="mb-2.5 block text-xs text-muted">Drag a type onto the map, adjust the point, then Save. Drag saved points to move them; click one to rename or delete it.</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {POINT_SYMBOLS.map((p) => <SymbolPill key={p.id} symbol={p} draggable />)}
+                  {allSymbols.map((p) => <SymbolPill key={p.id} symbol={p} draggable />)}
+                  <AddTypePill onClick={() => setTypeModal(true)} />
                 </div>
               </div>
               <Button variant="ghost" size="sm" icon={<Crosshair size={14} />} onClick={() => setPlacingCenter((v) => !v)}>
@@ -188,8 +236,8 @@ export function LocationTab({ event, canEdit }: TabProps) {
               <li key={a.id}>
                 <button onClick={() => setSelected(a.id)} className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm ${a.id === selected ? 'bg-surface-2' : ''}`}>
                   <span className="flex items-center gap-2.5">
-                    <AreaMark area={a} />
-                    {a.name || symbolOf(a.symbol)?.label || AREA_STYLE[a.kind].label}
+                    <AreaMark area={a} symbols={allSymbols} />
+                    {a.name || symbolOf(a.symbol, allSymbols)?.label || AREA_STYLE[a.kind].label}
                   </span>
                   <span className="hp-digits text-xs text-muted">{a.area_m2 ? `${Math.round(a.area_m2).toLocaleString()} m²` : ''}</span>
                 </button>
@@ -198,7 +246,118 @@ export function LocationTab({ event, canEdit }: TabProps) {
           </ul>
         </Card>
       </div>
+      <TypeModal open={typeModal} onClose={() => setTypeModal(false)} eventId={event.id} customs={customs} />
     </div>
+  );
+}
+
+function AddTypePill({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex items-center gap-1 rounded-full border border-dashed border-muted px-2.5 py-1 text-xs text-muted hover:border-text hover:text-text" title="Create your own type: name, colour, logo">
+      <Plus size={12} /> New type
+    </button>
+  );
+}
+
+const TYPE_COLORS = [SAFETY.green, SAFETY.blue, SAFETY.red, SAFETY.yellow, '#8C7CFF', '#FF7A1A', '#E23D8B', '#00A7A7', '#5B6270', '#111111'];
+
+/** Create (and delete) the event's own access-point types: name, colour, optional logo or image. */
+function TypeModal({ open, onClose, eventId, customs }: { open: boolean; onClose: () => void; eventId: string; customs: PointSymbol[] }) {
+  const qc = useQueryClient();
+  const [label, setLabel] = useState('');
+  const [color, setColor] = useState<string>(SAFETY.blue);
+  const [icon, setIcon] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const reset = () => (setLabel(''), setColor(SAFETY.blue), setIcon(null), setFileError(null));
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['symbols', eventId] });
+  const create = useMutation({
+    mutationFn: async () => {
+      const id = 'c' + Array.from(crypto.getRandomValues(new Uint8Array(10)), (b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
+      const { error } = await supabase.from('event_symbols').insert({ id, event_id: eventId, label: label.trim(), color, icon });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => (refresh(), reset(), onClose()),
+  });
+  const del = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('event_symbols').delete().eq('event_id', eventId).eq('id', id);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => (refresh(), void qc.invalidateQueries({ queryKey: ['areas', eventId] })),
+  });
+  const preview: PointSymbol = customSymbol({ id: 'cpreview', event_id: eventId, label: label.trim() || 'New type', color, icon });
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New access-point type"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" busy={create.isPending} disabled={!label.trim()} onClick={() => create.mutate()}>Create type</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Name"><Input value={label} maxLength={40} autoFocus placeholder="e.g. Bar, Stage, Taxi, Shuttle" onChange={(e) => setLabel(e.target.value)} /></Field>
+        <Field label="Colour">
+          <div className="flex flex-wrap items-center gap-2">
+            {TYPE_COLORS.map((c) => (
+              <button key={c} type="button" aria-label={c} onClick={() => setColor(c)} className="h-7 w-7 rounded-full border-2" style={{ background: c, borderColor: color.toLowerCase() === c.toLowerCase() ? 'var(--hp-text)' : 'transparent' }} />
+            ))}
+            <label className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-line px-2 text-xs text-muted hover:text-text">
+              <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-4 w-4 cursor-pointer border-0 bg-transparent p-0" />
+              Custom
+            </label>
+          </div>
+        </Field>
+        <Field label="Logo or image (optional)" hint="PNG with transparency works best. It is resized to a small icon.">
+          <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-line px-3 py-2 text-sm text-muted hover:border-muted hover:text-text">
+              <ImagePlus size={16} /> {icon ? 'Replace image' : 'Import an image'}
+              <input
+                type="file"
+                accept="image/png,image/svg+xml,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!f) return;
+                  try {
+                    setFileError(null);
+                    setIcon(await imageToPngDataUrl(f));
+                  } catch (err) {
+                    setFileError((err as Error).message);
+                  }
+                }}
+              />
+            </label>
+            {icon && <button type="button" onClick={() => setIcon(null)} className="text-xs text-muted hover:text-text">Remove image</button>}
+          </div>
+          {fileError && <p className="mt-1 text-xs text-bad">{fileError}</p>}
+        </Field>
+        <div>
+          <p className="mb-1.5 text-xs text-muted">Preview</p>
+          <SymbolPill symbol={preview} />
+        </div>
+        {create.error && <Alert tone="bad">{(create.error as Error).message}</Alert>}
+        {customs.length > 0 && (
+          <div className="border-t border-line pt-4">
+            <p className="mb-2 text-xs text-muted">Your types for this event (deleting one turns its points into plain points)</p>
+            <div className="flex flex-wrap gap-2">
+              {customs.map((c) => (
+                <span key={c.id} className="flex items-center gap-1">
+                  <SymbolPill symbol={c} />
+                  <button type="button" aria-label={`Delete ${c.label}`} onClick={() => del.mutate(c.id)} className="rounded p-1 text-muted hover:text-bad">
+                    <Trash2 size={13} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -231,18 +390,18 @@ function SurfaceCard({ areas, eventId }: { areas: AreaRow[]; eventId: string }) 
 }
 
 /** List marker: the symbol pictogram for typed points, the zone colour otherwise. */
-function AreaMark({ area }: { area: AreaRow }) {
-  const s = symbolOf(area.symbol);
+function AreaMark({ area, symbols }: { area: AreaRow; symbols: PointSymbol[] }) {
+  const s = symbolOf(area.symbol, symbols);
   if (!s) return <span className="h-2.5 w-2.5 rounded-sm" style={{ background: AREA_STYLE[area.kind].color }} />;
   const Icon = s.icon;
   return (
-    <span className="flex h-5 w-5 items-center justify-center rounded-[5px]" style={{ background: s.color }} title={s.norm}>
-      <Icon size={12} color={s.ink} strokeWidth={2.6} />
+    <span className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-[5px]" style={{ background: s.color }} title={s.norm}>
+      {s.image ? <img src={s.image} alt="" className="h-4 w-4 object-contain" /> : <Icon size={12} color={s.ink} strokeWidth={2.6} />}
     </span>
   );
 }
 
-function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShape, onSave, onDelete, busy }: { area: AreaRow; canEdit: boolean; editing: boolean; autoFocusName: boolean; onClose: () => void; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean; symbol: string | null }) => void; onDelete: () => void; busy: boolean }) {
+function AreaEditor({ area, symbols, isNew = false, onAddType, onSymbolChange, canEdit, editing, autoFocusName, onClose, onEditShape, onSave, onDelete, busy }: { area: AreaRow; symbols: PointSymbol[]; isNew?: boolean; onAddType: () => void; onSymbolChange?: (id: string) => void; canEdit: boolean; editing: boolean; autoFocusName: boolean; onClose: () => void; onEditShape: () => void; onSave: (p: { name: string | null; buffer: number; isPublic: boolean; symbol: string | null }) => void; onDelete: () => void; busy: boolean }) {
   const [name, setName] = useState(area.name ?? '');
   const [buffer, setBuffer] = useState(area.safety_buffer_m);
   const [pub, setPub] = useState(area.is_public);
@@ -250,10 +409,11 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
   const bufferMatters = ['exclusion', 'no_go', 'emergency'].includes(area.kind);
   return (
     <Card
-      title={<span className="flex items-center gap-2">{AREA_STYLE[area.kind].label} {!area.is_public && <Badge>private</Badge>}</span>}
+      title={<span className="flex items-center gap-2">{isNew ? 'New access point' : AREA_STYLE[area.kind].label} {!area.is_public && <Badge>private</Badge>}</span>}
       actions={<button onClick={onClose} className="text-xs text-muted hover:text-text">Close</button>}
     >
       <div className="space-y-3">
+        {isNew && <Alert>Not saved yet. Drag it on the map to adjust, pick another type if needed, then Save.</Alert>}
         <Field label="Name" hint={area.kind === 'access_point' ? 'Shown on the map and to participants (if public).' : undefined}>
           <Input
             value={name}
@@ -267,9 +427,10 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
         </Field>
         {area.kind === 'access_point' && canEdit && (
           <div className="flex flex-wrap gap-1.5">
-            {POINT_SYMBOLS.map((p) => (
-              <SymbolPill key={p.id} symbol={p} selected={symbol === p.id} onClick={() => (setName(p.label), setSymbol(p.id))} />
+            {symbols.map((p) => (
+              <SymbolPill key={p.id} symbol={p} draggable selected={symbol === p.id} onClick={() => (setName(p.label), setSymbol(p.id), onSymbolChange?.(p.id))} />
             ))}
+            <AddTypePill onClick={onAddType} />
           </div>
         )}
         {bufferMatters && (
@@ -285,7 +446,7 @@ function AreaEditor({ area, canEdit, editing, autoFocusName, onClose, onEditShap
         )}
         {canEdit && (
           <div className="flex justify-between gap-2 pt-2">
-            <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={onDelete} disabled={busy}>Delete</Button>
+            <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={onDelete} disabled={busy}>{isNew ? 'Discard' : 'Delete'}</Button>
             <Button variant="primary" size="sm" busy={busy} onClick={() => onSave({ name: name.trim() || null, buffer, isPublic: pub, symbol })}>Save</Button>
           </div>
         )}

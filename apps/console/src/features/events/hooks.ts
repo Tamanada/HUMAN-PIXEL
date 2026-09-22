@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { must, rpc, supabase } from '../../lib/supabase';
 import type { AreaRow, EventRow, FormationRow } from '../../lib/types';
+import type { EventSymbolRow } from '../../lib/symbols';
 
 export function useEvent(eventId: string) {
   const qc = useQueryClient();
@@ -67,5 +68,14 @@ export function useCounters(eventId: string) {
     queryKey: ['counters', eventId],
     refetchInterval: 15_000,
     queryFn: async () => must(await supabase.from('event_counters').select('registered, next_participant_number').eq('event_id', eventId).single()) as { registered: number; next_participant_number: number },
+  });
+}
+
+/** Organizer-defined access-point types (name, colour, logo) for this event. */
+export function useEventSymbols(eventId: string) {
+  return useQuery({
+    queryKey: ['symbols', eventId],
+    queryFn: async () =>
+      must(await supabase.from('event_symbols').select('id, event_id, label, color, icon').eq('event_id', eventId).order('created_at')) as EventSymbolRow[],
   });
 }

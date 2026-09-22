@@ -18,6 +18,7 @@ import {
   Drone,
   Info,
   LogIn,
+  MapPin,
   PackageSearch,
   ShieldCheck,
   Toilet,
@@ -39,8 +40,56 @@ export interface PointSymbol {
   /** Glyph colour: white, except black on the yellow warning family (ISO 3864). */
   ink: '#ffffff' | '#000000';
   icon: ComponentType<LucideProps>;
+  /** Organizer-imported logo (PNG data URL); drawn instead of the pictogram. */
+  image?: string;
   /** The standard the colour follows, shown as a tooltip. */
   norm: string;
+  /** Created by the organizer for this event (can be deleted). */
+  custom?: boolean;
+}
+
+/** Row of public.event_symbols. */
+export interface EventSymbolRow {
+  id: string;
+  event_id: string;
+  label: string;
+  color: string;
+  icon: string | null;
+}
+
+export function customSymbol(row: EventSymbolRow): PointSymbol {
+  return { id: row.id, label: row.label, color: row.color, ink: inkFor(row.color), icon: MapPin, image: row.icon ?? undefined, norm: 'Custom type', custom: true };
+}
+
+/** White glyph on dark colours, black on light ones (as ISO does on yellow). */
+export function inkFor(hex: string): '#ffffff' | '#000000' {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.62 ? '#000000' : '#ffffff';
+}
+
+/** Fits any image into a size×size transparent PNG (logo kept whole, centred): a few KB. */
+export async function imageToPngDataUrl(file: File, size = 64): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('This file is not an image the browser can read.'));
+      i.src = url;
+    });
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext('2d')!;
+    const k = Math.min(size / img.naturalWidth, size / img.naturalHeight);
+    const w = img.naturalWidth * k;
+    const h = img.naturalHeight * k;
+    ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+    return c.toDataURL('image/png');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export const POINT_SYMBOLS: PointSymbol[] = [
@@ -58,20 +107,24 @@ export const POINT_SYMBOLS: PointSymbol[] = [
 ];
 
 const BY_ID = new Map(POINT_SYMBOLS.map((s) => [s.id, s]));
-export const symbolOf = (id: string | null | undefined): PointSymbol | undefined => (id ? BY_ID.get(id) : undefined);
+/** Built-in lookup; pass the event's list to also find its custom types. */
+export const symbolOf = (id: string | null | undefined, all?: PointSymbol[]): PointSymbol | undefined =>
+  id ? (all ? all.find((s) => s.id === id) : BY_ID.get(id)) : undefined;
 export const symbolImageId = (id: string) => `hp-sym-${id}`;
 
 /**
  * Rasterises every symbol as a map icon: rounded square in the safety colour, white outline for
  * contrast on satellite imagery, lucide glyph in the ISO ink colour. Rendered at 2× for sharpness.
  */
-export async function loadSymbolImages(add: (id: string, img: HTMLImageElement) => void): Promise<void> {
+export async function loadSymbolImages(add: (id: string, img: HTMLImageElement) => void, symbols: PointSymbol[] = POINT_SYMBOLS): Promise<void> {
   await Promise.all(
-    POINT_SYMBOLS.map(
+    symbols.map(
       (s) =>
         new Promise<void>((resolve) => {
           const Icon = s.icon;
-          const glyph = renderToStaticMarkup(<Icon color={s.ink} size={28} strokeWidth={2.4} x={10} y={10} />);
+          const glyph = s.image
+            ? `<image href="${s.image}" x="8" y="8" width="32" height="32" preserveAspectRatio="xMidYMid meet"/>`
+            : renderToStaticMarkup(<Icon color={s.ink} size={28} strokeWidth={2.4} x={10} y={10} />);
           const svg =
             `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">` +
             `<rect x="2" y="2" width="44" height="44" rx="9" fill="${s.color}" stroke="#ffffff" stroke-width="3"/>` +
@@ -108,8 +161,8 @@ export function SymbolPill({ symbol: p, selected = false, draggable = false, onC
       className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-text ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
       style={selected ? { background: p.color, borderColor: p.color, color: p.ink } : { borderColor: p.color }}
     >
-      <span className="flex h-4 w-4 items-center justify-center rounded-[4px]" style={{ background: selected ? 'transparent' : p.color }}>
-        <Icon size={11} strokeWidth={2.8} color={p.ink} />
+      <span className="flex h-4 w-4 items-center justify-center overflow-hidden rounded-[4px]" style={{ background: selected ? 'transparent' : p.color }}>
+        {p.image ? <img src={p.image} alt="" className="h-3.5 w-3.5 object-contain" draggable={false} /> : <Icon size={11} strokeWidth={2.8} color={p.ink} />}
       </span>
       {p.label}
     </button>
