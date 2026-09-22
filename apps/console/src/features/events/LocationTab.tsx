@@ -30,6 +30,8 @@ export function LocationTab({ event, canEdit }: TabProps) {
   const qc = useQueryClient();
   const [tool, setTool] = useState<(typeof TOOLS)[number] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  // Picked in the list: the map flies there.
+  const [focus, setFocus] = useState<{ id: string; n: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Just created: its editor opens at the top with the name field focused.
   const [justCreated, setJustCreated] = useState<string | null>(null);
@@ -139,6 +141,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
           center={event.center_lat != null ? { lat: event.center_lat, lng: event.center_lng! } : null}
           draw={draw}
           selectedAreaId={selected}
+          focus={focus}
           onAreaClick={(id) => id !== PENDING_ID && setSelected(id)}
           onMapClick={onMapClick}
           height="100%"
@@ -235,7 +238,10 @@ export function LocationTab({ event, canEdit }: TabProps) {
           <ul className="divide-y divide-line">
             {(areas.data ?? []).map((a) => (
               <li key={a.id}>
-                <button onClick={() => setSelected(a.id)} className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm ${a.id === selected ? 'bg-surface-2' : ''}`}>
+                <button
+                  onClick={() => (setSelected(a.id), setFocus({ id: a.id, n: Date.now() }))}
+                  className={`flex w-full items-center justify-between gap-3 border-l-4 px-4 py-2.5 text-left text-sm transition ${a.id === selected ? 'border-pixel bg-pixel/20 font-semibold text-text' : 'border-transparent hover:bg-surface-2'}`}
+                >
                   <span className="flex items-center gap-2.5">
                     <AreaMark area={a} symbols={allSymbols} />
                     {a.name || symbolOf(a.symbol, allSymbols)?.label || AREA_STYLE[a.kind].label}

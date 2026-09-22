@@ -45,6 +45,8 @@ interface Props {
   edit?: EditMode;
   height?: number | string;
   selectedAreaId?: string | null;
+  /** Fly to this area (e.g. picked in a list); change `n` to fly again to the same one. */
+  focus?: { id: string; n: number } | null;
   onAreaClick?: (id: string) => void;
   onMapClick?: (lngLat: { lat: number; lng: number }) => void;
   /** Start on satellite imagery (drawing the ground needs to see it). */
@@ -90,7 +92,7 @@ function writeBearing(key: string | undefined, deg: number) {
 }
 const norm180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 
-export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange, onDropSymbol, onMovePoint, customSymbols }: Props) {
+export function MapView({ areas = [], points, center, draw, edit = null, height = 520, selectedAreaId, focus = null, onAreaClick, onMapClick, defaultSatellite = false, message, bearingKey, onBearingChange, onDropSymbol, onMovePoint, customSymbols }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
@@ -136,7 +138,9 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
         m.addLayer({ id: 'sat', type: 'raster', source: 'sat', layout: { visibility: 'none' } });
       }
       m.addSource('areas', { type: 'geojson', data: EMPTY });
-      m.addLayer({ id: 'areas-fill', type: 'fill', source: 'areas', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'fill'] } });
+      m.addLayer({ id: 'areas-fill', type: 'fill', source: 'areas', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['case', ['get', 'selected'], 0.4, ['get', 'fill']] } });
+      // Selection: a white glow around the chosen zone, a pulsing ring around the chosen point.
+      m.addLayer({ id: 'areas-sel-glow', type: 'line', source: 'areas', filter: ['==', ['get', 'id'], ''], layout: { 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 12, 'line-opacity': 0.6, 'line-blur': 5 } });
       m.addLayer({
         id: 'areas-line',
         type: 'line',
@@ -148,6 +152,7 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       void loadSymbolImages((id, img) => {
         if (!m.hasImage(id)) m.addImage(id, img, { pixelRatio: 2 });
       });
+      m.addLayer({ id: 'areas-sel-ring', type: 'circle', source: 'areas', filter: ['==', ['get', 'id'], ''], paint: { 'circle-radius': 20, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } });
       m.addLayer({
         id: 'areas-symbol',
         type: 'symbol',
@@ -268,6 +273,50 @@ export function MapView({ areas = [], points, center, draw, edit = null, height 
       fitted.current = true;
     }
   }, [points, ready]);
+
+  // Selected area: glow (zones) or ring (points), with a few pulses so the eye finds it.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    const id = selectedAreaId ?? '';
+    m.setFilter('areas-sel-glow', ['all', ['==', ['get', 'id'], id], ['==', ['geometry-type'], 'Polygon']]);
+    m.setFilter('areas-sel-ring', ['all', ['==', ['get', 'id'], id], ['==', ['geometry-type'], 'Point']]);
+    if (!id) return;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = (now - start) / 900; // three pulses of 0.9 s, then a steady highlight
+      if (t >= 3) {
+        m.setPaintProperty('areas-sel-ring', 'circle-radius', 20);
+        m.setPaintProperty('areas-sel-ring', 'circle-stroke-opacity', 1);
+        m.setPaintProperty('areas-sel-glow', 'line-opacity', 0.6);
+        return;
+      }
+      const f = t % 1;
+      m.setPaintProperty('areas-sel-ring', 'circle-radius', 14 + 30 * f);
+      m.setPaintProperty('areas-sel-ring', 'circle-stroke-opacity', 1 - f);
+      m.setPaintProperty('areas-sel-glow', 'line-opacity', 0.25 + 0.65 * (1 - f));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [selectedAreaId, ready]);
+
+  // Fly to an area picked outside the map (the list).
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || !focus) return;
+    const a = areas.find((x) => x.id === focus.id);
+    if (!a) return;
+    if (a.geom.type === 'Point') {
+      m.easeTo({ center: a.geom.coordinates as [number, number], zoom: Math.max(m.getZoom(), 18), duration: 700 });
+    } else {
+      const b = new maplibregl.LngLatBounds();
+      visitCoords(a.geom, (c) => b.extend(c as LngLatLike));
+      if (!b.isEmpty()) m.fitBounds(b, { padding: 90, maxZoom: 19, duration: 700, bearing: m.getBearing() });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.n, ready]);
 
   // Center changes (e.g. geocoded venue).
   useEffect(() => {
