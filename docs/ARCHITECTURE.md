@@ -241,6 +241,36 @@ without a stampede.
 - The phone shows the briefing and its own point (name, what to collect, opening hours, "Open in
   maps"). The console shows the load per point with a "Spread evenly" action.
 
+## 8c. Sponsor report
+
+What a brand receives the morning after, and — for a sponsored event — the thing that is actually
+sold. `get_event_sponsor_report` (SECURITY DEFINER, `hp_can_view_event`, organizer-only) returns:
+the sponsor and campaign (`events.sponsor`), the briefing the crowd was given, the design, the
+audience, the delivery figures, the split per distribution point, the attendance curve and the
+official photo, sealed with a SHA-256 of the payload like the record evidence.
+
+**The rule is that nothing is invented.** Three words carry the money and each is defined on the
+page itself, because a brand that has been sold "reach" a hundred times needs to see what it is
+being told:
+
+| | Proof |
+|---|---|
+| registered | signed up and holding a position |
+| checked in | their phone reported on the day |
+| in the picture | their phone reported from inside its tolerance radius while the formation was live |
+
+The headline is the **peak**, not the final count: people drift off after the shutter, so the report
+reads the 30-second `event_stat_snapshots` and takes the largest simultaneous figure with the time
+it happened. A test drives a known crowd (24 in position, then 10 leaving) and asserts the report
+still headlines 24 while the live figure falls to 14. Per distribution point it reports *sent there*
+and *turned up* — never "collected", because nothing scans the item; claiming otherwise once would
+make the whole document worthless.
+
+The console tab renders it and prints it: the theme variables are redefined on `:root` inside
+`@media print` (Tailwind resolves `--color-*` where it declares them, so an override further down
+the tree never reaches the utilities), and everything that is neither the report, inside it, nor one
+of its ancestors is hidden with `:has()`, which keeps the rule independent of the shell's layout.
+
 ## 9. Media
 
 One master + derivatives (display 2560 px, share 1080 px, thumb 480 px), generated in the organizer

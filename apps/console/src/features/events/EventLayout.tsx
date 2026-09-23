@@ -17,6 +17,7 @@ const LiveTab = lazy(() => import('./LiveTab').then((m) => ({ default: m.LiveTab
 const PhotosTab = lazy(() => import('./PhotosTab').then((m) => ({ default: m.PhotosTab })));
 const ShareTab = lazy(() => import('./ShareTab').then((m) => ({ default: m.ShareTab })));
 const SettingsTab = lazy(() => import('./SettingsTab').then((m) => ({ default: m.SettingsTab })));
+const SponsorTab = lazy(() => import('./SponsorTab').then((m) => ({ default: m.SponsorTab })));
 const EvidenceTab = lazy(() => import('./EvidenceTab').then((m) => ({ default: m.EvidenceTab })));
 
 export interface TabProps {
@@ -33,6 +34,7 @@ const TABS = [
   ['photos', 'Photos'],
   ['share', 'Invite'],
   ['settings', 'Settings'],
+  ['sponsor', 'Sponsor report'],
   ['evidence', 'Evidence'],
 ] as const;
 
@@ -81,6 +83,7 @@ export function EventLayout() {
           <Route path="photos" element={<PhotosTab {...props} />} />
           <Route path="share" element={<ShareTab {...props} />} />
           <Route path="settings" element={<SettingsTab {...props} />} />
+          <Route path="sponsor" element={<SponsorTab {...props} />} />
           <Route path="evidence" element={<EvidenceTab {...props} />} />
         </Routes>
       </Suspense>

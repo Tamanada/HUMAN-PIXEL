@@ -466,6 +466,65 @@ describe('dashboard & evidence', () => {
   });
 });
 
+describe('sponsor report', () => {
+  // What the brand receives. Every figure must be one the database witnessed: the test drives a
+  // known crowd and then checks the report says exactly that, no more.
+  it('reports the peak attendance, the split per collection point, and invents nothing', async () => {
+    const s = await buildScenario(pool, 60, { lock: false });
+    const point = (lng: number, name: string) =>
+      rpc<string>(pool, s.organizer, 'save_event_area', [
+        s.eventId, 'collection', JSON.stringify({ type: 'Point', coordinates: [ANCHOR.lng + lng, ANCHOR.lat] }),
+        name, 0, true, null, null, null, null, null, 'One t-shirt per person',
+      ]);
+    await point(0.001, 'Tent A');
+    await point(0.002, 'Tent B');
+    await asUser(pool, s.organizer, (c) => c.query(`update public.events set briefing = $2, sponsor = $3 where id = $1`, [
+      s.eventId,
+      JSON.stringify({ dressCode: { text: 'Plain white t-shirt', colors: ['#ffffff'] }, collect: 'Sponsor t-shirt' }),
+      JSON.stringify({ name: 'Chang Beer', campaign: 'Full Moon 2026' }),
+    ]));
+
+    const users = await createUsers(pool, 30, 'sponsor');
+    await runPool(users, 10, (u) => rpc(pool, u, 'join_event', [s.joinCode, CONSENT]));
+
+    // 18 of the 30 reach their position; 6 more only check in; 6 never show up at all.
+    const ids = (await pool.query<{ id: string }>(`select m.id from public.event_members m where m.event_id = $1 order by m.participant_number`, [s.eventId])).rows.map((r) => r.id);
+    await pool.query(`update public.participant_status set state = 'IN_POSITION', reported_at = now() where member_id = any($1::uuid[])`, [ids.slice(0, 18)]);
+    await pool.query(`update public.participant_status set state = 'CHECKED_IN', reported_at = now() where member_id = any($1::uuid[])`, [ids.slice(18, 24)]);
+    // The 30-second snapshots are what the report reads: one while filling, one at the peak.
+    const snap = () => pool.query(`insert into public.event_stat_snapshots (event_id, at, state, counts) values ($1, now(), 'POSITIONING', public.hp_event_counts($1))`, [s.eventId]);
+    await snap();
+    await pool.query(`update public.participant_status set state = 'IN_POSITION' where member_id = any($1::uuid[])`, [ids.slice(18, 24)]);
+    await snap();
+    // Then people drift off after the shutter: the report must still headline the peak.
+    await pool.query(`update public.participant_status set state = 'LEFT_POSITION' where member_id = any($1::uuid[])`, [ids.slice(0, 10)]);
+    await snap();
+
+    const r = await rpc<any>(pool, s.organizer, 'get_event_sponsor_report', [s.eventId]);
+    expect(r.sponsor.name).toBe('Chang Beer');
+    expect(r.audience.registered).toBe(30);
+    expect(r.delivery.peak_in_position).toBe(24);
+    expect(r.delivery.peak_in_position_at).toBeTruthy();
+    expect(r.delivery.now.in_position).toBe(14); // the live figure did fall; the headline did not
+    expect(r.briefing.dressCode.text).toBe('Plain white t-shirt');
+    expect(r.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.curve.length).toBeGreaterThanOrEqual(3);
+
+    // Per point: everybody sent somewhere, and "turned up" can never exceed "sent there".
+    expect(r.pickups).toHaveLength(2);
+    expect(r.pickups.reduce((a: number, p: any) => a + p.assigned, 0)).toBe(30);
+    expect(r.pickups.reduce((a: number, p: any) => a + p.checked_in, 0)).toBe(24);
+    for (const p of r.pickups) expect(p.checked_in).toBeLessThanOrEqual(p.assigned);
+  });
+
+  it('is organizer-only: a participant cannot read the commercial figures', async () => {
+    const s = await buildScenario(pool, 20);
+    const [u] = await createUsers(pool, 1, 'sponsor-priv');
+    await rpc(pool, u!, 'join_event', [s.joinCode, CONSENT]);
+    await expectError(rpc(pool, u!, 'get_event_sponsor_report', [s.eventId]), /FORBIDDEN/);
+  });
+});
+
 describe('privacy', () => {
   it('account deletion releases upcoming positions and anonymises membership', async () => {
     const s = await buildScenario(pool, 20);

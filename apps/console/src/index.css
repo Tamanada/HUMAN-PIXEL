@@ -129,3 +129,63 @@ body {
 .maplibregl-ctrl-attrib {
   font-size: 10px;
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Printing the sponsor report. The console is dark by design; a report a brand forwards has to come
+   out as a plain white page. The variables are redefined on :root rather than on the report itself,
+   because Tailwind resolves --color-* where it declares them (on :root) — an override further down
+   the tree never reaches the utilities.
+   --------------------------------------------------------------------------------------------- */
+@media print {
+  :root {
+    --hp-bg: #ffffff;
+    --hp-surface: #ffffff;
+    --hp-surface-2: #f4f4f7;
+    --hp-line: #d4d4dd;
+    --hp-text: #101014;
+    --hp-muted: #55555f;
+    --hp-pixel: #4634e0;
+    --hp-on-pixel: #ffffff;
+    --hp-ok: #00784a;
+    --hp-warn: #9a5200;
+    --hp-bad: #bb0f2a;
+    color-scheme: light;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  .hp-no-print {
+    display: none !important;
+  }
+
+  /* The report prints alone. Everything that is neither the report, nor inside it, nor one of its
+     ancestors, goes; the ancestors that remain are flattened so the page starts top-left. This
+     needs no knowledge of the shell's layout, so it cannot drift when the shell changes. */
+  body:has(#hp-sponsor-report) *:not(:has(#hp-sponsor-report)):not(#hp-sponsor-report, #hp-sponsor-report *) {
+    display: none !important;
+  }
+  body:has(#hp-sponsor-report) *:has(#hp-sponsor-report) {
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+  }
+
+  #hp-sponsor-report section,
+  #hp-sponsor-report figure,
+  #hp-sponsor-report table,
+  #hp-sponsor-report dl {
+    break-inside: avoid;
+  }
+  #hp-sponsor-report img {
+    max-height: 120mm;
+    object-fit: contain;
+  }
+  @page {
+    margin: 14mm;
+  }
+}
