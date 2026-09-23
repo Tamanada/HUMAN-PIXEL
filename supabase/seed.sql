@@ -1,6 +1,11 @@
 -- LOCAL DEVELOPMENT SEED ONLY (supabase db reset). Never runs in staging/production.
 -- Sign in with these emails through the one-time code (Mailpit: http://127.0.0.1:55424).
 
+-- The database linter (`supabase db lint`) is plpgsql_check running inside Postgres. Without the
+-- extension the command reports nothing and passes, which is how thirteen warnings stayed red in
+-- CI and green on every developer machine. Local only: production has no use for it.
+create extension if not exists plpgsql_check;
+
 do $$
 declare
   v_admin uuid := '00000000-0000-4000-8000-00000000a001';

@@ -47,7 +47,9 @@ jobs:
           cache: npm
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned: the linter lives in the database image that this CLI pulls, so "latest" means
+          # a new release can turn CI red with no change of ours. Bump it deliberately.
+          version: 2.117.0
       - run: npm ci
       - name: Start Supabase (applies every migration from scratch)
         run: supabase start -x studio,imgproxy,vector,logflare

@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.117.0 # pinned: a deploy must not change tool under us
       - name: Link staging project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
         env:
@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.117.0 # pinned: a deploy must not change tool under us
       - name: Refuse during live events
         # Never migrate production while an event is in its critical window.
         run: |

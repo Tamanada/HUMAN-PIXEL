@@ -13,13 +13,30 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      # A backup job that fails every night teaches you to ignore red, and the day production
+      # exists you believe you are covered when you are not. So: skip loudly when it is not
+      # configured yet, fail loudly the moment it is.
+      - name: Is a production database configured?
+        id: cfg
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "${DATABASE_URL:-}" ] || [ -z "${BACKUP_PASSPHRASE:-}" ]; then
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo '::notice title=Backup skipped::Set the BACKUP_DATABASE_URL and BACKUP_PASSPHRASE secrets on the production environment to turn nightly dumps on.'
+          else
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          fi
       - name: Install PostgreSQL client 17
+        if: steps.cfg.outputs.configured == 'true'
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -so /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
       - name: Dump, compress, encrypt (AES-256, passphrase from secrets)
+        if: steps.cfg.outputs.configured == 'true'
         run: |
           set -euo pipefail
           file="human-pixel-$(date -u +%Y%m%dT%H%M%SZ).dump.gz.enc"
@@ -27,11 +44,18 @@ jobs:
             | gzip -9 \
             | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_PASSPHRASE -out "$file"
           ls -lh "$file"
+          # An empty or truncated dump is worse than none: it looks like a backup.
+          size=$(stat -c%s "$file")
+          if [ "$size" -lt 4096 ]; then
+            echo "::error title=Backup too small::$file is $size bytes; the dump did not complete."
+            exit 1
+          fi
           echo "FILE=$file" >> "$GITHUB_ENV"
         env:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
       - uses: actions/upload-artifact@v4
+        if: steps.cfg.outputs.configured == 'true'
         with:
           name: ${{ env.FILE }}
           path: ${{ env.FILE }}
