@@ -158,7 +158,7 @@ export function LocationTab({ event, canEdit }: TabProps) {
           onMapClick={onMapClick}
           height="100%"
           defaultSatellite
-          message={error ? (error as Error).message.replace(/^INVALID_GEOMETRY: /, '').replace(/^\w/, (c) => c.toUpperCase()) : null}
+          message={error ? (error as Error).message.replace(/^[A-Z_]+: /, '').replace(/^\w/, (c) => c.toUpperCase()) : null}
           bearingKey={event.id}
           onDropSymbol={
             canEdit
