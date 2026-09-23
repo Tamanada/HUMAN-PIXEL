@@ -87,5 +87,6 @@ begin
 end;
 $$;
 
-revoke all on function public.get_event_sponsor_report(uuid) from public;
+-- House rule: strip Supabase's default privileges (anon included) before granting.
+revoke all on function public.get_event_sponsor_report(uuid) from public, anon;
 grant execute on function public.get_event_sponsor_report(uuid) to authenticated;
