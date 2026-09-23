@@ -4,9 +4,16 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource/jetbrains-mono/500.css';
 @import '@fontsource/jetbrains-mono/700.css';
-/* Formation fonts (rendered into the design mask on canvas) */
+/* Formation fonts (rendered into the design mask on canvas). Heavy, wide faces first: on the
+   ground a stroke is a row of people, so thin letters break up as soon as somebody is missing. */
 @import '@fontsource/anton';
 @import '@fontsource/archivo-black';
+@import '@fontsource/alfa-slab-one';
+@import '@fontsource/bungee';
+@import '@fontsource/titan-one';
+@import '@fontsource/passion-one/900.css';
+@import '@fontsource/bebas-neue';
+@import '@fontsource/fjalla-one';
 
 /* HUMAN PIXEL console: "mission control". Dark default, light available. */
 :root {

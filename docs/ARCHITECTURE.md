@@ -171,6 +171,17 @@ the formation"). The order is surface → design → head count → capacity:
 - Opening registration requires a capacity (`PRECONDITION_CAPACITY`). Formations are bounded
   by the plan's `max_participants_per_event`, no longer by a number typed in advance.
 
+**Fonts.** The built-in faces are self-hosted (`@fontsource`, no CDN call) and grouped by how they
+survive from the air: a stroke is a row of people, so a thin letter breaks up the moment someone is
+missing. An organizer can also import their own (`.ttf/.otf/.woff/.woff2`, ≤ 5 MB): the file is
+validated with the `FontFace` API *before* upload, then stored in the `formation-assets` bucket
+beside the design images, under the same per-event RLS. The CSS family is `hp-font-<asset id>`, not
+the file's own name — two "Brand-Bold.ttf" never collide and nothing can shadow a built-in. Storing
+the file (rather than keeping it in the browser) is what keeps a saved design reproducible:
+`formations.source.fontFamily` names a face the console can load again months later. Fonts can be
+deleted again; design images cannot, because every formation version built from one refers to it
+(`formation_assets_delete` checks `mime_type like 'font/%'`).
+
 **Curved layout (`formation/curve.ts`).** One rigid rectangle on a bending beach is capped by the
 bend, not by the width of the sand, so the letters stay small. Ticking *Follow the shape of the
 area* cuts the message at its spaces and lays the segments along the area's centre line, each one

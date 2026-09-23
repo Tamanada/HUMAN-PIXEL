@@ -79,3 +79,19 @@ export function useEventSymbols(eventId: string) {
       must(await supabase.from('event_symbols').select('id, event_id, label, color, icon').eq('event_id', eventId).order('created_at')) as EventSymbolRow[],
   });
 }
+
+/** Fonts the organizer imported for this event (stored beside the design images). */
+export function useFontAssets(eventId: string) {
+  return useQuery({
+    queryKey: ['fonts', eventId],
+    queryFn: async () =>
+      must(
+        await supabase
+          .from('formation_assets')
+          .select('id, file_name, mime_type, storage_path')
+          .eq('event_id', eventId)
+          .like('mime_type', 'font/%')
+          .order('created_at'),
+      ) as { id: string; file_name: string; mime_type: string; storage_path: string }[],
+  });
+}

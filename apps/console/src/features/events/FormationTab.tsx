@@ -9,13 +9,22 @@ import { rpc, supabase } from '../../lib/supabase';
 import type { FormationRow } from '../../lib/types';
 import type { TabProps } from './EventLayout';
 import { constraintsFromAreas, runEngine, saveFormation, suggestWidth, ENGINE_VERSION, type SaveProgress } from './formationClient';
-import { useAreas, useFormationPoints, useFormations } from './hooks';
+import { useAreas, useFontAssets, useFormationPoints, useFormations } from './hooks';
+import { FONT_ACCEPT, deleteFont, ensureAssetFont, familyForAsset, fontDisplayName, importFont, type FontChoice } from '../../lib/fonts';
 
-const FONTS = [
-  { family: 'Anton', weight: 400, label: 'Anton (condensed, very bold)' },
-  { family: 'Archivo Black', weight: 400, label: 'Archivo Black (wide, heavy)' },
-  { family: 'Space Grotesk Variable', weight: 700, label: 'Space Grotesk Bold' },
-  { family: 'Inter Variable', weight: 900, label: 'Inter Black' },
+// A stroke is a row of people: thin letters break up the moment somebody is missing, so the heavy
+// faces come first and the list says what each one is for.
+const BUILTIN_FONTS: FontChoice[] = [
+  { family: 'Anton', weight: 400, label: 'Anton — condensed, very bold', group: 'Heaviest (best from the air)' },
+  { family: 'Archivo Black', weight: 400, label: 'Archivo Black — wide, heavy', group: 'Heaviest (best from the air)' },
+  { family: 'Alfa Slab One', weight: 400, label: 'Alfa Slab One — slab, thickest strokes', group: 'Heaviest (best from the air)' },
+  { family: 'Bungee', weight: 400, label: 'Bungee — signage, blocky', group: 'Heaviest (best from the air)' },
+  { family: 'Titan One', weight: 400, label: 'Titan One — rounded, heavy', group: 'Heaviest (best from the air)' },
+  { family: 'Passion One', weight: 900, label: 'Passion One Black — heavy condensed', group: 'Condensed (fits long messages)' },
+  { family: 'Bebas Neue', weight: 400, label: 'Bebas Neue — tall condensed caps', group: 'Condensed (fits long messages)' },
+  { family: 'Fjalla One', weight: 400, label: 'Fjalla One — condensed', group: 'Condensed (fits long messages)' },
+  { family: 'Space Grotesk Variable', weight: 700, label: 'Space Grotesk Bold', group: 'Lighter (use with many people)' },
+  { family: 'Inter Variable', weight: 900, label: 'Inter Black', group: 'Lighter (use with many people)' },
 ];
 
 const STAGE_LABEL: Record<FormationStage, string> = {
@@ -36,7 +45,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
   // ---- design --------------------------------------------------------------------------------
   const [mode, setMode] = useState<'text' | 'image'>('text');
   const [text, setText] = useState('LOVE\nPHANGAN');
-  const [font, setFont] = useState(FONTS[0]!);
+  const [font, setFont] = useState<FontChoice>(BUILTIN_FONTS[0]!);
   const [letterSpacing, setLetterSpacing] = useState(0.04);
   const [file, setFile] = useState<File | null>(null);
   const [imgMode, setImgMode] = useState<'auto' | 'alpha' | 'luminance'>('auto');
@@ -44,9 +53,76 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [mask, setMask] = useState<Mask | null>(null);
   const [maskError, setMaskError] = useState<string | null>(null);
   // Curved layout: the message is cut at the spaces and laid along the shape of the area.
+  // Fonts the organizer imported for this event: registered with the document so the canvas that
+  // renders the design mask can draw with them.
+  const fontAssets = useFontAssets(event.id);
+  const [fontError, setFontError] = useState<string | null>(null);
+  const [importingFont, setImportingFont] = useState(false);
+  const [facesReady, setFacesReady] = useState(0);
+  const importedFonts = useMemo<FontChoice[]>(
+    () =>
+      (fontAssets.data ?? []).map((a) => ({
+        family: familyForAsset(a.id),
+        weight: 400,
+        label: fontDisplayName(a.file_name),
+        group: 'Imported',
+        assetId: a.id,
+        storagePath: a.storage_path,
+      })),
+    [fontAssets.data],
+  );
+  const fonts = useMemo(() => [...BUILTIN_FONTS, ...importedFonts], [importedFonts]);
   const [curved, setCurved] = useState(false);
   const [segmentMasks, setSegmentMasks] = useState<Mask[] | null>(null);
   const words = useMemo(() => text.split(/\s+/).filter(Boolean), [text]);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      for (const f of importedFonts) {
+        try {
+          await ensureAssetFont(f.assetId!, f.storagePath!);
+        } catch (e) {
+          if (alive) setFontError((e as Error).message);
+        }
+      }
+      // The design is drawn on canvas, so it must be redrawn once the face is actually available.
+      if (alive && importedFonts.length > 0) setFacesReady((n) => n + 1);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [importedFonts]);
+
+  // A font deleted elsewhere (or by us) must not stay selected: the canvas would fall back silently.
+  useEffect(() => {
+    if (font.assetId && fontAssets.data && !importedFonts.some((f) => f.assetId === font.assetId)) setFont(BUILTIN_FONTS[0]!);
+  }, [importedFonts, font, fontAssets.data]);
+
+  const onImportFont = async (file: File) => {
+    setFontError(null);
+    setImportingFont(true);
+    try {
+      const { id, storagePath } = await importFont(event.id, file);
+      await qc.invalidateQueries({ queryKey: ['fonts', event.id] });
+      setFont({ family: familyForAsset(id), weight: 400, label: fontDisplayName(file.name), group: 'Imported', assetId: id, storagePath });
+    } catch (e) {
+      setFontError((e as Error).message);
+    } finally {
+      setImportingFont(false);
+    }
+  };
+
+  const onDeleteFont = async (f: FontChoice) => {
+    setFontError(null);
+    try {
+      await deleteFont(f.assetId!, f.storagePath!);
+      setFont(BUILTIN_FONTS[0]!);
+      await qc.invalidateQueries({ queryKey: ['fonts', event.id] });
+    } catch (e) {
+      setFontError((e as Error).message);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -75,7 +151,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
       alive = false;
       clearTimeout(t);
     };
-  }, [mode, text, font, letterSpacing, file, imgMode, invert, curved]);
+  }, [mode, text, font, letterSpacing, file, imgMode, invert, curved, facesReady]);
 
   // ---- placement -----------------------------------------------------------------------------
   // Sizing: "fit" = the surface decides (largest design, head count computed); "count" = a known
@@ -192,7 +268,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
       if (!result || !mask) throw new Error('Generate first');
       let source: Record<string, unknown>;
       if (mode === 'text') {
-        source = { kind: 'text', text, fontFamily: font.family, fontWeight: font.weight, letterSpacingEm: letterSpacing, lineHeightEm: 1.05, curved: useCurved, segments: useCurved ? words : undefined };
+        source = { kind: 'text', text, fontFamily: font.family, fontName: font.label, fontAssetId: font.assetId, fontWeight: font.weight, letterSpacingEm: letterSpacing, lineHeightEm: 1.05, curved: useCurved, segments: useCurved ? words : undefined };
       } else {
         const assetId = crypto.randomUUID();
         const ext = file!.name.split('.').pop()?.toLowerCase() ?? 'png';
@@ -243,11 +319,42 @@ export function FormationTab({ event, canEdit }: TabProps) {
             {mode === 'text' ? (
               <div className="space-y-3">
                 <Field label="Message (new line = new row)"><Textarea rows={3} value={text} onChange={(e) => setText(e.target.value.toUpperCase())} className="hp-display text-lg" /></Field>
-                <Field label="Font">
-                  <Select value={font.family} onChange={(e) => setFont(FONTS.find((f) => f.family === e.target.value)!)}>
-                    {FONTS.map((f) => <option key={f.family} value={f.family}>{f.label}</option>)}
-                  </Select>
-                </Field>
+                {/* The import control sits OUTSIDE Field: Field is a <label>, and a nested one
+                    would hand the click to the select instead of the file input. */}
+                <div>
+                  <Field label="Font">
+                    <Select value={font.family} onChange={(e) => setFont(fonts.find((f) => f.family === e.target.value) ?? BUILTIN_FONTS[0]!)}>
+                      {[...new Set(fonts.map((f) => f.group))].map((g) => (
+                        <optgroup key={g} label={g}>
+                          {fonts.filter((f) => f.group === g).map((f) => <option key={f.family} value={f.family}>{f.label}</option>)}
+                        </optgroup>
+                      ))}
+                    </Select>
+                  </Field>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                    <label className={`inline-flex cursor-pointer items-center gap-1.5 underline hover:text-text ${importingFont ? 'pointer-events-none opacity-50' : ''}`}>
+                      <Upload size={12} />
+                      {importingFont ? 'Importing…' : 'Import a font'}
+                      <input
+                        type="file"
+                        accept={FONT_ACCEPT}
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = '';
+                          if (f) void onImportFont(f);
+                        }}
+                      />
+                    </label>
+                    <span>.ttf, .otf, .woff, .woff2 — up to 5 MB</span>
+                    {font.assetId && (
+                      <button type="button" className="underline hover:text-text" onClick={() => void onDeleteFont(font)}>
+                        Remove "{font.label}"
+                      </button>
+                    )}
+                  </div>
+                  {fontError && <div className="mt-2"><Alert tone="bad">{fontError}</Alert></div>}
+                </div>
                 <Field label={`Letter spacing ${letterSpacing.toFixed(2)} em`}>
                   <input type="range" min={-0.05} max={0.5} step={0.01} value={letterSpacing} onChange={(e) => setLetterSpacing(Number(e.target.value))} className="w-full accent-[var(--hp-pixel)]" />
                 </Field>

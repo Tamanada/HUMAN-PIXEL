@@ -129,6 +129,34 @@ describe('security: the formation stays secret', () => {
   });
 });
 
+describe('imported fonts', () => {
+  // A font the organizer brings is stored like a design image so a saved design stays reproducible.
+  it('accepts font files, and lets the organizer drop a font but never a design image', async () => {
+    const s = await buildScenario(pool, 200, { lock: false });
+    const insert = (name: string, mime: string, path: string) =>
+      asUser(pool, s.organizer, (c) =>
+        c.query(
+          `insert into public.formation_assets (event_id, storage_path, file_name, mime_type, bytes, created_by)
+           values ($1, $2, $3, $4, 1024, $5) returning id`,
+          [s.eventId, path, name, mime, s.organizer.id],
+        ),
+      );
+
+    const font = await insert('Brand-Bold.woff2', 'font/woff2', `${s.eventId}/font.woff2`);
+    const image = await insert('logo.png', 'image/png', `${s.eventId}/logo.png`);
+    expect(font.rowCount).toBe(1);
+
+    // Anything that is neither an image nor a font is refused by the check constraint.
+    await expectError(insert('payload.exe', 'application/octet-stream', `${s.eventId}/x.exe`), /formation_assets_mime_type_check/);
+
+    // The font can go; the image cannot, because every formation version built from it refers to it.
+    const dropFont = await asUser(pool, s.organizer, (c) => c.query(`delete from public.formation_assets where id = $1`, [font.rows[0].id]));
+    expect(dropFont.rowCount).toBe(1);
+    const dropImage = await asUser(pool, s.organizer, (c) => c.query(`delete from public.formation_assets where id = $1`, [image.rows[0].id]));
+    expect(dropImage.rowCount).toBe(0);
+  });
+});
+
 describe('formation validation is enforced by the database', () => {
   it('rejects points inside an exclusion zone even if the client claims they are fine', async () => {
     const s = await buildScenario(pool, 500, { lock: false }).catch((e) => {
