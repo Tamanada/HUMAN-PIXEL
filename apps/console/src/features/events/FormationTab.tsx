@@ -204,7 +204,8 @@ export function FormationTab({ event, canEdit }: TabProps) {
   });
 
   const constraintsCount = useMemo(() => constraintsFromAreas(areas.data ?? []), [areas.data]);
-  const noPerimeter = !constraintsCount.perimeter;
+  // Either boundary is enough: the formation area alone is the stricter one.
+  const noArea = !constraintsCount.perimeter && !constraintsCount.formationArea;
 
   const previewLayer: PointsLayer | null = useMemo(
     () => (result ? { lat: result.points.map((p) => p.lat), lng: result.points.map((p) => p.lng) } : null),
@@ -214,7 +215,10 @@ export function FormationTab({ event, canEdit }: TabProps) {
   return (
     <div className="space-y-6">
       {!formationEditable(event.state) && <Alert tone="warn">The formation is frozen at this stage of the event ({event.state}).</Alert>}
-      {noPerimeter && <Alert tone="warn">Draw the event perimeter in "Location & safety" first: the engine keeps every pixel inside it.</Alert>}
+      {noArea && <Alert tone="warn">Draw the event perimeter (or a formation area) in "Location &amp; safety" first: the engine keeps every pixel inside it.</Alert>}
+      {!noArea && !constraintsCount.perimeter && (
+        <Alert>Using the formation area as the boundary. A perimeter is still required before you can open registration.</Alert>
+      )}
       <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
         <div className="space-y-4">
           <Card title="1 · Secret design">
@@ -337,7 +341,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
               <Button size="sm" variant="ghost" icon={<Dices size={14} />} onClick={() => setSeed(randomSeed())}>Seed {seed}</Button>
             </div>
             <div className="mt-4 flex gap-2">
-              <Button variant="primary" icon={<Wand2 size={16} />} disabled={!editable || !mask || !anchor || (sizing === 'count' && !width) || noPerimeter || !!progress} onClick={generate}>Generate</Button>
+              <Button variant="primary" icon={<Wand2 size={16} />} disabled={!editable || !mask || !anchor || (sizing === 'count' && !width) || noArea || !!progress} onClick={generate}>Generate</Button>
               {progress && <Button variant="ghost" onClick={() => cancelRef.current?.()}>Cancel</Button>}
             </div>
             {progress && (
@@ -361,6 +365,10 @@ export function FormationTab({ event, canEdit }: TabProps) {
             onBearingChange={setViewBearing}
           />
           {result && <ResultPanel result={result} />}
+          {result && sizing === 'fit' && mode === 'text' && text.includes('
+') && result.metrics.footprintWidthM < 0.5 * Math.max(result.metrics.footprintWidthM, 3 * result.metrics.footprintHeightM) && (
+            <Alert>Your area is long and narrow: a message on a single line would fill much more of it (more people, thicker letters).</Alert>
+          )}
           {result && editable && (
             <Card title="3 · Save & validate">
               <p className="mb-3 text-sm text-muted">
