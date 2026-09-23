@@ -9,6 +9,7 @@ export * from './formation/bitmapFont';
 export * from './formation/engine';
 export * from './formation/capacity';
 export * from './formation/placement';
+export * from './formation/curve';
 export * from './formation/fillOrder';
 export * from './formation/random';
 export * from './formation/grid';

@@ -2,7 +2,7 @@
  * Browser-only mask producers (Canvas / OffscreenCanvas). Imported via
  * `@human-pixel/core/formation-browser` so Node code never touches the DOM.
  */
-import { maskFromRgba, trimMask, type Mask } from './mask';
+import { createMask, maskFromRgba, trimMask, type Mask } from './mask';
 
 export interface TextMaskOptions {
   text: string;
@@ -77,6 +77,98 @@ export function renderTextMask(o: TextMaskOptions): Mask {
   });
   const img = ctx.getImageData(0, 0, w, h);
   return trimMask(maskFromRgba(img.data, w, h, 'alpha'), 8, Math.round(4 * scale));
+}
+
+/** Rectangle of a mask, as a new mask. */
+function crop(m: Mask, x0: number, y0: number, w: number, h: number): Mask {
+  const out = createMask(Math.max(1, w), Math.max(1, h));
+  for (let y = 0; y < out.height; y++) {
+    const src = (y + y0) * m.width + x0;
+    out.data.set(m.data.subarray(src, src + out.width), y * out.width);
+  }
+  return out;
+}
+
+/** Columns of a mask that carry ink. */
+function inkColumns(m: Mask, threshold: number): { from: number; to: number } | null {
+  let from = -1;
+  let to = -1;
+  for (let x = 0; x < m.width; x++) {
+    let on = false;
+    for (let y = 0; y < m.height && !on; y++) on = m.data[y * m.width + x]! > threshold;
+    if (on) {
+      if (from < 0) from = x;
+      to = x;
+    }
+  }
+  return from < 0 ? null : { from, to };
+}
+
+/**
+ * One mask per segment of the message, cut at spaces and line breaks, ALL THE SAME HEIGHT.
+ *
+ * A curved layout gives every segment the same height on the ground, so the masks must share their
+ * vertical box: trimmed one by one, a word without descenders would come out taller than its
+ * neighbours and its letters bigger. They are cropped together to the band the whole message
+ * really uses, then each one is trimmed horizontally so it hugs its own word.
+ */
+export function renderTextSegmentMasks(o: TextMaskOptions): Mask[] {
+  const words = o.text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) throw new Error('Text is empty');
+  const weight = o.fontWeight ?? 800;
+  const size = 200;
+  const font = `${weight} ${size}px "${o.fontFamily}", sans-serif`;
+  const probe = makeCanvas(8, 8).ctx;
+  probe.font = font;
+  const spacingPx = (o.letterSpacingEm ?? 0.04) * size;
+  const measure = (l: string) => probe.measureText(l).width + spacingPx * Math.max(0, [...l].length - 1);
+  const lineH = (o.lineHeightEm ?? 1.05) * size;
+  const padX = size * 0.15;
+  const padY = size * 0.3;
+  // A common box height in pixels: every segment is rendered into the same vertical frame.
+  const boxH = Math.min(o.resolution ?? 2400, 720);
+  const scale = boxH / (lineH + padY * 2);
+  const masks = words.map((word) => {
+    const w = Math.max(8, Math.ceil((measure(word) + padX * 2) * scale));
+    const { ctx } = makeCanvas(w, boxH);
+    ctx.scale(scale, scale);
+    ctx.font = font;
+    ctx.fillStyle = '#000';
+    ctx.textBaseline = 'middle';
+    let x = padX;
+    const y = padY + lineH / 2;
+    if (spacingPx === 0) ctx.fillText(word, x, y);
+    else {
+      for (const ch of word) {
+        ctx.fillText(ch, x, y);
+        x += probe.measureText(ch).width + spacingPx;
+      }
+    }
+    return maskFromRgba(ctx.getImageData(0, 0, w, boxH).data, w, boxH, 'alpha');
+  });
+  // Crop every segment to the same band: the rows the message as a whole actually uses.
+  let top = boxH;
+  let bottom = -1;
+  for (const m of masks) {
+    for (let y = 0; y < m.height; y++) {
+      let on = false;
+      for (let x = 0; x < m.width && !on; x++) on = m.data[y * m.width + x]! > 8;
+      if (on) {
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+  }
+  if (bottom < 0) throw new Error('Text is empty');
+  const pad = Math.round(boxH * 0.02);
+  const y0 = Math.max(0, top - pad);
+  const h = Math.min(boxH - y0, bottom - top + 1 + pad * 2);
+  return masks.map((m) => {
+    const cols = inkColumns(m, 8);
+    const x0 = cols ? Math.max(0, cols.from - pad) : 0;
+    const w = cols ? Math.min(m.width - x0, cols.to - cols.from + 1 + pad * 2) : m.width;
+    return crop(m, x0, y0, w, h);
+  });
 }
 
 export interface ImageMaskOptions {

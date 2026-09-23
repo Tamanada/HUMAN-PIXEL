@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Dices, Lock, RotateCcw, Sparkles, Upload, Wand2 } from 'lucide-react';
 import { deepestPoint, formationEditable, geoJsonPolygonToLatLng, randomSeed, type FormationResult, type FormationStage, type Mask } from '@human-pixel/core';
-import { ensureFontLoaded, maskToRgba, renderImageMask, renderTextMask } from '@human-pixel/core/formation-browser';
+import { ensureFontLoaded, maskToRgba, renderImageMask, renderTextMask, renderTextSegmentMasks } from '@human-pixel/core/formation-browser';
 import { Alert, Badge, Button, Card, Field, Input, Modal, Select, Stat, Textarea } from '../../components/ui';
 import { MapView, readBearing, type PointsLayer } from '../../components/MapView';
 import { rpc, supabase } from '../../lib/supabase';
@@ -43,20 +43,28 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [invert, setInvert] = useState(false);
   const [mask, setMask] = useState<Mask | null>(null);
   const [maskError, setMaskError] = useState<string | null>(null);
+  // Curved layout: the message is cut at the spaces and laid along the shape of the area.
+  const [curved, setCurved] = useState(false);
+  const [segmentMasks, setSegmentMasks] = useState<Mask[] | null>(null);
+  const words = useMemo(() => text.split(/\s+/).filter(Boolean), [text]);
 
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
       try {
         let m: Mask | null = null;
+        let segs: Mask[] | null = null;
         if (mode === 'text' && text.trim()) {
           await ensureFontLoaded(font.family, font.weight);
-          m = renderTextMask({ text, fontFamily: font.family, fontWeight: font.weight, letterSpacingEm: letterSpacing, resolution: 2400 });
+          const o = { text, fontFamily: font.family, fontWeight: font.weight, letterSpacingEm: letterSpacing, resolution: 2400 };
+          m = renderTextMask(o);
+          if (curved) segs = renderTextSegmentMasks(o);
         } else if (mode === 'image' && file) {
           m = await renderImageMask(file, { mode: imgMode, invert, resolution: 2400 });
         }
         if (alive) {
           setMask(m);
+          setSegmentMasks(segs);
           setMaskError(null);
         }
       } catch (e) {
@@ -67,7 +75,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
       alive = false;
       clearTimeout(t);
     };
-  }, [mode, text, font, letterSpacing, file, imgMode, invert]);
+  }, [mode, text, font, letterSpacing, file, imgMode, invert, curved]);
 
   // ---- placement -----------------------------------------------------------------------------
   // Sizing: "fit" = the surface decides (largest design, head count computed); "count" = a known
@@ -85,6 +93,8 @@ export function FormationTab({ event, canEdit }: TabProps) {
   const [autoPlace, setAutoPlace] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const auto = sizing === 'fit' && autoPlace;
+  // A curved layout needs the engine to choose the placement: it solves the whole curve at once.
+  const useCurved = curved && mode === 'text' && auto && (segmentMasks?.length ?? 0) > 0;
   const [minSpacing, setMinSpacing] = useState(0.9);
   const [zoneSize, setZoneSize] = useState(1500);
   const [seed, setSeed] = useState(() => randomSeed());
@@ -120,6 +130,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
     setAnchor(defaultAnchor());
     setPlacingAnchor(false);
     setAutoPlace(true);
+    setCurved(false);
   };
 
   // ---- generation ----------------------------------------------------------------------------
@@ -142,6 +153,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
         widthM: auto || (sizing === 'fit' && widthOverride == null) ? undefined : width,
         rotationDeg: rotation,
         autoPlace: auto ? { preferredRotationDeg: alignedRotation } : undefined,
+        segments: useCurved ? { masks: segmentMasks! } : undefined,
         targetCount: sizing === 'count' ? count : undefined,
         targetSpacingM: targetSpacing,
         minSpacingM: minSpacing,
@@ -159,7 +171,8 @@ export function FormationTab({ event, canEdit }: TabProps) {
       setResult(res);
       if (auto) {
         // Show what the engine chose; switching auto off keeps it as a starting point to tweak.
-        setRotation(Math.round(res.rotationDeg));
+        // A curved layout has one rotation per segment, so there is nothing to put in the slider.
+        if (!res.blocks) setRotation(Math.round(res.rotationDeg));
         setAnchor(res.anchor);
       }
     } catch (e) {
@@ -179,7 +192,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
       if (!result || !mask) throw new Error('Generate first');
       let source: Record<string, unknown>;
       if (mode === 'text') {
-        source = { kind: 'text', text, fontFamily: font.family, fontWeight: font.weight, letterSpacingEm: letterSpacing, lineHeightEm: 1.05 };
+        source = { kind: 'text', text, fontFamily: font.family, fontWeight: font.weight, letterSpacingEm: letterSpacing, lineHeightEm: 1.05, curved: useCurved, segments: useCurved ? words : undefined };
       } else {
         const assetId = crypto.randomUUID();
         const ext = file!.name.split('.').pop()?.toLowerCase() ?? 'png';
@@ -191,7 +204,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
         if (ins.error) throw new Error(ins.error.message);
         source = { kind: 'image', assetId: ins.data.id, fileName: file!.name, mode: imgMode, invert };
       }
-      const params = { sizing, targetCount: result.points.length, targetSpacingM: targetSpacing, widthM: result.widthM, heightM: result.heightM, rotationDeg: result.rotationDeg, autoPlace: auto, minSpacingM: minSpacing, anchor: result.anchor, seed, zoneSize, engine: ENGINE_VERSION };
+      const params = { sizing, targetCount: result.points.length, targetSpacingM: targetSpacing, widthM: result.widthM, heightM: result.heightM, rotationDeg: result.rotationDeg, autoPlace: auto, minSpacingM: minSpacing, anchor: result.anchor, seed, zoneSize, engine: ENGINE_VERSION, curved: useCurved, blocks: result.blocks };
       return saveFormation(event.id, result, source, params, setSaveProgress);
     },
     onSuccess: ({ report: r, formationId }) => {
@@ -285,6 +298,18 @@ export function FormationTab({ event, canEdit }: TabProps) {
                   </span>
                 </label>
               )}
+              {sizing === 'fit' && mode === 'text' && (
+                <label className={`col-span-2 flex items-start gap-2.5 rounded-lg border p-2.5 text-sm ${autoPlace ? 'cursor-pointer border-line' : 'cursor-not-allowed border-line/40 opacity-50'}`}>
+                  <input type="checkbox" disabled={!autoPlace} checked={curved} onChange={(e) => setCurved(e.target.checked)} className="mt-0.5 accent-[var(--hp-pixel)]" />
+                  <span>
+                    <span className="block">Follow the shape of the area{words.length > 1 ? ` (${words.length} segments)` : ''}</span>
+                    <span className="block text-xs text-muted">
+                      The message is cut at the spaces and laid along the curve, every segment turned to the ground under it and all the same size.
+                      On a bent beach the letters get far bigger than one straight block allows.
+                    </span>
+                  </span>
+                </label>
+              )}
               {sizing === 'fit' && (
                 <Field label="Human pixels" hint={result ? 'Calculated from the area and the spacing' : 'Calculated when you generate'}>
                   <Input disabled value={result ? result.points.length.toLocaleString() : ''} placeholder="—" />
@@ -310,7 +335,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
               <Field
                 label={`Rotation ${rotation}°`}
                 className="col-span-2"
-                hint={auto ? 'Chosen automatically to fill the area.' : rotation === alignedRotation ? 'Reads left→right in the map view.' : undefined}
+                hint={useCurved ? 'One rotation per segment: the message follows the curve.' : auto ? 'Chosen automatically to fill the area.' : rotation === alignedRotation ? 'Reads left→right in the map view.' : undefined}
               >
                 <input type="range" min={-180} max={180} value={rotation} disabled={auto} onChange={(e) => setRotation(Number(e.target.value))} className="w-full accent-[var(--hp-pixel)]" />
                 {!auto && rotation !== alignedRotation && (
@@ -365,8 +390,14 @@ export function FormationTab({ event, canEdit }: TabProps) {
             onBearingChange={setViewBearing}
           />
           {result && <ResultPanel result={result} />}
-          {result && sizing === 'fit' && mode === 'text' && text.includes(String.fromCharCode(10)) && result.metrics.footprintHeightM * 3 > result.metrics.footprintWidthM && (
+          {result && sizing === 'fit' && mode === 'text' && !useCurved && text.includes(String.fromCharCode(10)) && result.metrics.footprintHeightM * 3 > result.metrics.footprintWidthM && (
             <Alert>Your area is long and narrow: a message on a single line would fill much more of it (more people, thicker letters).</Alert>
+          )}
+          {result && useCurved && result.blocks && result.blocks.length > 1 && bendOf(result.blocks) > 45 && (
+            <Alert tone="warn">
+              The message bends by {Math.round(bendOf(result.blocks))}° across the area. It reads well from straight above, but from a low
+              drone angle the far end will be read at a slant — check the shot before the day.
+            </Alert>
           )}
           {result && editable && (
             <Card title="3 · Save & validate">
@@ -438,20 +469,42 @@ function SkyPreview({ result }: { result: FormationResult }) {
     const c = ref.current;
     if (!c) return;
     const W = 1200;
-    const H = Math.round((W * result.heightM) / result.widthM) || 400;
+    // A curved message lies along the ground, not along the design axes, so the preview is turned
+    // to its average heading: a beach running north–south would otherwise draw a tower of pixels.
+    const view = result.blocks?.length ? -meanHeading(result.blocks) : 0;
+    const rad = (view * Math.PI) / 180;
+    const cs = Math.cos(rad);
+    const sn = Math.sin(rad);
+    const at = (p: { dx: number; dy: number }) => ({ x: p.dx * cs - p.dy * sn, y: p.dx * sn + p.dy * cs });
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of result.points) {
+      const q = at(p);
+      if (q.x < minX) minX = q.x;
+      if (q.x > maxX) maxX = q.x;
+      if (q.y < minY) minY = q.y;
+      if (q.y > maxY) maxY = q.y;
+    }
+    const pad = result.metrics.spacingM * 2;
+    const spanX = Math.max(1, maxX - minX + pad * 2);
+    const spanY = Math.max(1, maxY - minY + pad * 2);
+    const H = Math.max(80, Math.round((W * spanY) / spanX));
     c.width = W;
     c.height = H;
     const ctx = c.getContext('2d')!;
     ctx.fillStyle = '#e9dcc0'; // sand
     ctx.fillRect(0, 0, W, H);
-    const sx = W / result.widthM;
+    const sx = W / spanX;
     const k = Math.floor((result.points.length * turnout) / 100);
     const r = Math.max(0.8, Math.min(4, (result.metrics.spacingM * sx) / 2.4));
     ctx.fillStyle = '#16121f';
     for (const p of result.points) {
       if (p.fillRank >= k) continue;
+      const q = at(p);
       ctx.beginPath();
-      ctx.arc(W / 2 + p.dx * sx, H / 2 - p.dy * sx, r, 0, Math.PI * 2);
+      ctx.arc((q.x - minX + pad) * sx, (maxY + pad - q.y) * sx, r, 0, Math.PI * 2);
       ctx.fill();
     }
   }, [result, turnout]);
@@ -466,6 +519,24 @@ function SkyPreview({ result }: { result: FormationResult }) {
   );
 }
 
+/** Average heading of the segments (circular mean, so headings near ±180° still average sanely). */
+function meanHeading(blocks: { rotationDeg: number; widthM: number }[]): number {
+  let x = 0;
+  let y = 0;
+  for (const b of blocks) {
+    const r = (b.rotationDeg * Math.PI) / 180;
+    x += Math.cos(r) * b.widthM;
+    y += Math.sin(r) * b.widthM;
+  }
+  return (Math.atan2(y, x) * 180) / Math.PI;
+}
+
+/** How much a curved message turns between its first and last segment. */
+function bendOf(blocks: { rotationDeg: number }[]): number {
+  const r = blocks.map((b) => b.rotationDeg);
+  return Math.max(...r) - Math.min(...r);
+}
+
 function ResultPanel({ result }: { result: FormationResult }) {
   const m = result.metrics;
   const tone = m.readabilityScore >= 75 ? 'ok' : m.readabilityScore >= 50 ? 'warn' : 'bad';
@@ -475,7 +546,11 @@ function ResultPanel({ result }: { result: FormationResult }) {
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Pixels" value={m.pointCount.toLocaleString()} />
         <Stat label="Spacing" value={`${m.nnMeanM.toFixed(2)} m`} sub={`min ${m.nnMinM.toFixed(2)} m`} />
-        <Stat label="Footprint" value={`${Math.round(m.footprintWidthM)}×${Math.round(m.footprintHeightM)}`} sub="metres" />
+        <Stat
+          label="Footprint"
+          value={`${Math.round(m.footprintWidthM)}×${Math.round(m.footprintHeightM)}`}
+          sub={result.blocks && result.blocks.length > 1 ? `m · ${result.blocks.length} segments, ${Math.round(result.blocks[0]!.heightM)} m tall, bends ${Math.round(bendOf(result.blocks))}°` : 'metres'}
+        />
         <Stat label="Stroke width" value={`${m.strokePersonsP20.toFixed(1)}`} sub="people (thinnest 20%)" />
         <Stat label="Density" value={m.densityPerM2.toFixed(2)} sub="people / m²" />
         <Stat label="Zones" value={result.zones.length} sub={result.zones.map((z) => z.label).join(' ')} />

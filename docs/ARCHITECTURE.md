@@ -171,6 +171,32 @@ the formation"). The order is surface → design → head count → capacity:
 - Opening registration requires a capacity (`PRECONDITION_CAPACITY`). Formations are bounded
   by the plan's `max_participants_per_event`, no longer by a number typed in advance.
 
+**Curved layout (`formation/curve.ts`).** One rigid rectangle on a bending beach is capped by the
+bend, not by the width of the sand, so the letters stay small. Ticking *Follow the shape of the
+area* cuts the message at its spaces and lays the segments along the area's centre line, each one
+turned to the ground beneath it:
+
+1. *Spine*: traced outwards from the deepest point of the area (chamfer distance transform),
+   re-centring across the band at every step, so the line turns with the beach. Slicing along one
+   global axis was tried first and fails on a crescent — near the tips a slice runs ALONG the sand.
+2. *Layout*: for a candidate height every segment's width follows from its own aspect ratio; the
+   blocks are walked along the spine by arc length and turned to their local chord.
+3. *Fit*: the segment's ink samples must stay inside the area; bisection on the height, largest
+   first, trying several positions along the curve.
+
+All segments share one height on purpose: sized independently, a short word would come out twice as
+tall as a long one. `renderTextSegmentMasks` therefore renders the words into a common vertical box
+and crops them together. The win comes from the curve, not from resizing words.
+
+The engine then works in world axes (`rotationDeg` 0) because each segment carries its own rotation,
+and the constraint field tests every segment per cell. Two consequences: **stroke width is measured
+in each segment's own frame** (on a rotated raster the staircase edges of the letters read as thin
+strokes and would punish a curved layout for nothing), and **zones follow the reading order** rather
+than a world axis, so a marshalling group never straddles two segments that face different ways.
+Measured on a real crescent beach (event "lala", *FULL MOON FESTIVAL*): 2,450 → 3,726 people,
+stroke 1.7 → 2.0 persons, readability 56 → 64. Nothing changes in the database (the design lands in
+`formations.source` / `params`, both free-form JSON) or on the phone: a pixel is a pixel.
+
 ## 8. Synchronisation model
 
 Clock: NTP-style exchange with the `time` Edge Function. 5 samples, keep the 3 with the lowest RTT,

@@ -16,6 +16,7 @@ import {
   pointsChecksum,
   polygonToLocal,
   progressiveFillOrder,
+  fitCurvedPlacement,
   renderBitmapText,
   toPointRows,
   type FormationResult,
@@ -277,5 +278,74 @@ describe('sizing from the surface (capacity is an output)', () => {
     // Reading direction follows the preferred rotation: turned the other way round, it flips.
     const flipped = generateFormation({ mask: line, anchor: ANCHOR, targetSpacingM: 1.5, perimeter: strip, seed: 1, autoPlace: { preferredRotationDeg: 180 } });
     expect(Math.abs(Math.abs(flipped.rotationDeg) - 155)).toBeLessThan(4);
+  });
+});
+
+describe('curved layout (the message follows the shape of the area)', () => {
+  // A crescent beach: a 50 m band of sand bent through 145°, like Haad Rin.
+  const arc = (r: number, a: number) => frame.toLatLng({ x: r * Math.cos(a), y: r * Math.sin(a) });
+  const outer: LatLng[] = [];
+  for (let i = 0; i <= 40; i++) outer.push(arc(200, Math.PI * (0.1 + 0.8 * (i / 40))));
+  for (let i = 40; i >= 0; i--) outer.push(arc(150, Math.PI * (0.1 + 0.8 * (i / 40))));
+  const crescent: Polygon<LatLng> = { outer };
+  const words = ['FULL', 'MOON', 'FESTIVAL'];
+  const masks = words.map((w) => renderBitmapText(w, 8));
+  const whole = renderBitmapText(words.join(' '), 8);
+
+  it('every segment keeps the same letter height, and the message bends with the beach', () => {
+    const fit = fitCurvedPlacement({ masks, formationArea: crescent, preferredRotationDeg: 0 });
+    expect(fit.blocks).toHaveLength(3);
+    // One shared height: no word comes out bigger than its neighbours.
+    for (const b of fit.blocks) expect(b.heightM).toBeCloseTo(fit.heightM, 6);
+    // Widths follow each word's own aspect ratio.
+    fit.blocks.forEach((b, i) => expect(b.widthM / b.heightM).toBeCloseTo(masks[i]!.width / masks[i]!.height, 3));
+    // The segments turn with the sand rather than all facing the same way.
+    expect(fit.bendDeg).toBeGreaterThan(40);
+    // The letters use the width of the sand (50 m band), not what a straight block would allow.
+    expect(fit.heightM).toBeGreaterThan(30);
+  });
+
+  it('reads in the direction of the organizer map view', () => {
+    const a = fitCurvedPlacement({ masks, formationArea: crescent, preferredRotationDeg: 0 });
+    const b = fitCurvedPlacement({ masks, formationArea: crescent, preferredRotationDeg: 180 });
+    // Turned the other way round, the first word starts at the other end of the beach.
+    const firstA = frame.toLocal(a.blocks[0]!.anchor);
+    const firstB = frame.toLocal(b.blocks[0]!.anchor);
+    expect(Math.sign(firstA.x)).toBe(-Math.sign(firstB.x));
+  });
+
+  it('fits far more people on a curved beach than one rigid block', () => {
+    const common = { anchor: ANCHOR, targetSpacingM: 1.5, formationArea: crescent, seed: 7 } as const;
+    const straight = generateFormation({ ...common, mask: whole, autoPlace: { preferredRotationDeg: 0 } });
+    const curved = generateFormation({ ...common, mask: whole, segments: { masks }, autoPlace: { preferredRotationDeg: 0 } });
+    expect(curved.blocks).toHaveLength(3);
+    expect(curved.points.length).toBeGreaterThan(straight.points.length * 2);
+    // Thicker strokes are the point: a bigger message reads better from the air.
+    expect(curved.metrics.strokeWidthP20M).toBeGreaterThan(straight.metrics.strokeWidthP20M);
+    expect(curved.metrics.clippedFraction).toBeLessThan(0.02);
+    assertInvariants(curved, curved.points.length, 0.9);
+  });
+
+  it('keeps every pixel on the sand, outside the exclusions', () => {
+    const rock: Polygon<LatLng> = { outer: [arc(160, 1.2), arc(190, 1.2), arc(190, 1.35), arc(160, 1.35)] };
+    const r = generateFormation({
+      mask: whole,
+      anchor: ANCHOR,
+      segments: { masks },
+      targetSpacingM: 1.5,
+      formationArea: crescent,
+      exclusions: [{ polygon: rock, bufferM: 3 }],
+      seed: 7,
+      autoPlace: { preferredRotationDeg: 0 },
+    });
+    const sand = polygonToLocal(frame, crescent);
+    const local = polygonToLocal(frame, rock);
+    for (const p of r.points) {
+      const q = frame.toLocal({ lat: p.lat, lng: p.lng });
+      expect(pointInPolygon(q, sand)).toBe(true);
+      expect(pointInBufferedPolygon(q, local, 3)).toBe(false);
+    }
+    // Marshalling groups follow the message: a zone never straddles two segments.
+    expect(r.zones.length).toBeGreaterThan(0);
   });
 });

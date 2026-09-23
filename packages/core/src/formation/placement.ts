@@ -45,7 +45,7 @@ function rotateXY(p: XY, deg: number): XY {
 }
 
 /** Orientation (deg) of the area's minimum-area bounding rectangle, and whether that axis is the long one. */
-function principalAxis(pts: XY[]): { deg: number; long: number; short: number } {
+export function principalAxis(pts: XY[]): { deg: number; long: number; short: number } {
   let best = { deg: 0, area: Infinity, w: 0, h: 0 };
   for (let a = 0; a < 180; a += 1) {
     const b = bboxOf(pts.map((p) => rotateXY(p, -a)));

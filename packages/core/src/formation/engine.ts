@@ -25,6 +25,7 @@ import { sampleMask, coverageFraction, type Mask } from './mask';
 import { SpatialGrid } from './grid';
 import { progressiveFillOrder } from './fillOrder';
 import { fitPlacement } from './placement';
+import { fitCurvedPlacement, type PlacedBlock } from './curve';
 import { mulberry32, shuffleInPlace } from './random';
 
 export interface ExclusionInput {
@@ -52,6 +53,13 @@ export interface FormationInput {
    * direction closest to preferredRotationDeg (the organizer's map view).
    */
   autoPlace?: { preferredRotationDeg?: number };
+  /**
+   * Curved layout: the message is cut into these segments (all at the same height) and laid along
+   * the spine of the area, each with its own rotation. Overrides mask, anchor, width and rotation.
+   */
+  segments?: { masks: Mask[]; gapEm?: number };
+  /** Segments already placed (skips the curved solve). Overrides mask, anchor, width and rotation. */
+  blocks?: { mask: Mask; block: PlacedBlock }[];
   /** Fit mode: tolerated share of the design falling outside the allowed area. Default 0.005. */
   maxClippedFraction?: number;
   /** Minimum centre-to-centre distance between two people. */
@@ -77,7 +85,7 @@ export interface FormationPoint {
   /** East/north meters from the anchor. */
   x: number;
   y: number;
-  /** Design-frame coordinates (before rotation), for previews. */
+  /** Design-frame coordinates (before rotation), for previews. Curved layouts: metres from the anchor. */
   dx: number;
   dy: number;
   zone: number;
@@ -130,6 +138,8 @@ export interface FormationResult {
   rotationDeg: number;
   /** Centre of the design on the ground (the input anchor, or the one auto-placement chose). */
   anchor: LatLng;
+  /** Curved layout only: where each segment ended up. Width/height/rotation above cover them all. */
+  blocks?: PlacedBlock[];
 }
 
 export class FormationError extends Error {
@@ -186,7 +196,32 @@ export function generateFormation(input: FormationInput): FormationResult {
   let anchor = input.anchor;
   let rotationDeg = input.rotationDeg ?? 0;
   let W: number;
-  if (input.autoPlace) {
+  let H: number;
+  // Curved layout: several placed segments instead of one rigid design. The field then lives in
+  // world axes (rotationDeg 0), because each segment carries its own rotation.
+  const placed = resolveBlocks(input, rotationDeg);
+  if (placed) {
+    const mean = {
+      lat: placed.reduce((t, p) => t + p.block.anchor.lat, 0) / placed.length,
+      lng: placed.reduce((t, p) => t + p.block.anchor.lng, 0) / placed.length,
+    };
+    const f0 = new LocalFrame(mean);
+    const corners: XY[] = [];
+    for (const { block } of placed) {
+      const c = f0.toLocal(block.anchor);
+      for (const sx of [-0.5, 0.5]) {
+        for (const sy of [-0.5, 0.5]) {
+          const r = rotate({ x: sx * block.widthM, y: sy * block.heightM }, block.rotationDeg);
+          corners.push({ x: c.x + r.x, y: c.y + r.y });
+        }
+      }
+    }
+    const bb = bboxOf(corners);
+    anchor = f0.toLatLng({ x: (bb.minX + bb.maxX) / 2, y: (bb.minY + bb.maxY) / 2 });
+    W = bb.maxX - bb.minX + 1;
+    H = bb.maxY - bb.minY + 1;
+    rotationDeg = 0;
+  } else if (input.autoPlace) {
     let pl;
     try {
       pl = fitPlacement({ ...input, preferredRotationDeg: input.autoPlace.preferredRotationDeg ?? rotationDeg });
@@ -196,22 +231,45 @@ export function generateFormation(input: FormationInput): FormationResult {
     anchor = pl.anchor;
     rotationDeg = pl.rotationDeg;
     W = pl.widthM;
+    H = input.heightM ?? (W * input.mask.height) / input.mask.width;
   } else {
     W = input.widthM ?? fitDesignWidth(input);
+    H = input.heightM ?? (W * input.mask.height) / input.mask.width;
   }
   if (!(W > 0)) throw new FormationError('INVALID_INPUT', 'widthM must be positive');
-  const H = input.heightM ?? (W * input.mask.height) / input.mask.width;
   const frame = new LocalFrame(anchor);
   const rand = mulberry32(seed);
 
   // ---- 1. constraint field -------------------------------------------------------------
-  const coverage = coverageFraction(input.mask);
-  if (coverage <= 0) throw new FormationError('EMPTY_DESIGN', 'The design is empty.');
-  const estArea = coverage * W * H;
+  const threshold = input.coverageThreshold ?? 0.5;
+  const fieldBlocks = placed ? placed.map(({ mask, block }) => localBlock(frame, mask, block)) : null;
+  let estArea: number;
+  let ink: (x: number, y: number) => boolean;
+  if (fieldBlocks) {
+    estArea = placed!.reduce((t, p) => t + coverageFraction(p.mask) * p.block.widthM * p.block.heightM, 0);
+    ink = (x, y) => {
+      for (const b of fieldBlocks) {
+        if (x < b.minX || x > b.maxX || y < b.minY || y > b.maxY) continue;
+        const dx = x - b.cx;
+        const dy = y - b.cy;
+        const lx = dx * b.cs + dy * b.sn;
+        const ly = dy * b.cs - dx * b.sn;
+        if (Math.abs(lx) > b.hw || Math.abs(ly) > b.hh) continue;
+        const m = b.mask;
+        if (sampleMask(m, ((lx + b.hw) / (2 * b.hw)) * m.width, ((b.hh - ly) / (2 * b.hh)) * m.height) >= threshold) return true;
+      }
+      return false;
+    };
+  } else {
+    const m = input.mask;
+    estArea = coverageFraction(m) * W * H;
+    ink = (x, y) => sampleMask(m, ((x + W / 2) / W) * m.width, ((H / 2 - y) / H) * m.height) >= threshold;
+  }
+  if (estArea <= 0) throw new FormationError('EMPTY_DESIGN', 'The design is empty.');
   const sEst = input.targetCount != null ? Math.sqrt((2 * estArea) / (SQRT3 * input.targetCount)) : input.targetSpacingM!;
   let cell = Math.max(sEst / 6, 0.03);
   if ((W / cell) * (H / cell) > MAX_FIELD_CELLS) cell = Math.sqrt((W * H) / MAX_FIELD_CELLS);
-  const field = buildField(input, frame, W, H, cell, rotationDeg, progress);
+  const field = buildField(input, frame, W, H, cell, rotationDeg, ink, progress);
   if (field.validCells === 0) {
     throw new FormationError('NO_VALID_AREA', 'No part of the design lies inside the allowed area (check perimeter and exclusion zones).');
   }
@@ -293,12 +351,38 @@ export function generateFormation(input: FormationInput): FormationResult {
   // ---- 6. metrics, zones, ranks, labels -------------------------------------------------
   progress('metrics', 0);
   const nn = nearestNeighbourStats(xs, ys, n, spacing);
-  const stroke = strokeWidths(field);
+  // Stroke width is measured in the design's own frame: on a rotated raster the staircase edges of
+  // the letters would read as thin strokes and punish a curved layout for nothing.
+  const stroke = strokeStats(
+    placed
+      ? placed.flatMap(({ mask, block }) =>
+          strokeSamples(
+            buildField(
+              input,
+              new LocalFrame(block.anchor),
+              block.widthM,
+              block.heightM,
+              cell,
+              block.rotationDeg,
+              (x, y) => sampleMask(mask, ((x + block.widthM / 2) / block.widthM) * mask.width, ((block.heightM / 2 - y) / block.heightM) * mask.height) >= threshold,
+              () => {},
+            ),
+          ),
+        )
+      : strokeSamples(field),
+  );
   const strokePersons = stroke.p20 / Math.max(spacing, 1e-6);
   const readability = readabilityScore(strokePersons, nn.mean, clippedFraction);
 
-  // Reading-order index: rows top→bottom, then left→right (row height = spacing).
+  // Reading-order index: rows top→bottom, then left→right (row height = spacing). A curved layout
+  // reads segment by segment: within one, the rows and columns of that segment's own frame.
+  const seg = fieldBlocks ? assignSegments(fieldBlocks, xs, ys, n) : null;
   const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => {
+    if (seg) {
+      const ra = Math.round(-seg.ly[a]! / spacing);
+      const rb = Math.round(-seg.ly[b]! / spacing);
+      return seg.of[a]! - seg.of[b]! || ra - rb || seg.lx[a]! - seg.lx[b]!;
+    }
     const ra = Math.round(-ys[a]! / spacing);
     const rb = Math.round(-ys[b]! / spacing);
     return ra - rb || xs[a]! - xs[b]!;
@@ -306,9 +390,11 @@ export function generateFormation(input: FormationInput): FormationResult {
 
   const zoneSize = input.zoneSize ?? 1_500;
   const zoneCount = Math.max(1, Math.min(52, Math.round(n / zoneSize)));
-  const byX = Array.from({ length: n }, (_, i) => i).sort((a, b) => xs[a]! - xs[b]!);
+  // Zones are strips across the design; on a curved layout, consecutive slices of the message, so
+  // a marshalling group never straddles two segments that face different ways.
+  const zoneOrder = seg ? order : Array.from({ length: n }, (_, i) => i).sort((a, b) => xs[a]! - xs[b]!);
   const zoneOf = new Int32Array(n);
-  byX.forEach((i, k) => {
+  zoneOrder.forEach((i, k) => {
     zoneOf[i] = Math.min(zoneCount - 1, Math.floor((k * zoneCount) / n));
   });
 
@@ -377,6 +463,7 @@ export function generateFormation(input: FormationInput): FormationResult {
     heightM: H,
     rotationDeg,
     anchor,
+    blocks: placed?.map((p) => p.block),
   };
 }
 
@@ -402,9 +489,12 @@ export function fitDesignWidth(
   const maxClip = input.maxClippedFraction ?? 0.005;
   const aspect = input.mask.height / input.mask.width;
   const boundary = { ...input, exclusions: [], targetCount: 1 } as unknown as FormationInput;
+  const threshold = input.coverageThreshold ?? 0.5;
+  const m = input.mask;
   const fits = (w: number): boolean => {
     const h = w * aspect;
-    const f = buildField({ ...boundary, widthM: w }, frame, w, h, Math.max(w, h) / 320, input.rotationDeg ?? 0, () => {});
+    const ink = (x: number, y: number) => sampleMask(m, ((x + w / 2) / w) * m.width, ((h / 2 - y) / h) * m.height) >= threshold;
+    const f = buildField({ ...boundary, widthM: w }, frame, w, h, Math.max(w, h) / 320, input.rotationDeg ?? 0, ink, () => {});
     return f.designCells > 0 && 1 - f.validCells / f.designCells <= maxClip;
   };
   const lo = 2;
@@ -432,6 +522,93 @@ export function fitDesignWidth(
   return good * 0.97;
 }
 
+/** Segments to place: given ready-made, or solved from the message and the shape of the area. */
+function resolveBlocks(input: FormationInput, rotationDeg: number): { mask: Mask; block: PlacedBlock }[] | null {
+  if (input.blocks?.length) return input.blocks;
+  const masks = input.segments?.masks;
+  if (!masks?.length) return null;
+  try {
+    const fit = fitCurvedPlacement({
+      masks,
+      gapEm: input.segments!.gapEm,
+      perimeter: input.perimeter,
+      formationArea: input.formationArea,
+      preferredRotationDeg: input.autoPlace?.preferredRotationDeg ?? rotationDeg,
+      maxClippedFraction: input.maxClippedFraction,
+      coverageThreshold: input.coverageThreshold,
+    });
+    return fit.blocks.map((block, i) => ({ mask: masks[i]!, block }));
+  } catch (e) {
+    throw new FormationError('NO_VALID_AREA', (e as Error).message);
+  }
+}
+
+interface LocalBlock {
+  mask: Mask;
+  cx: number;
+  cy: number;
+  hw: number;
+  hh: number;
+  cs: number;
+  sn: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+/** A placed segment in field coordinates, with the bounding circle that skips it cheaply. */
+function localBlock(frame: LocalFrame, mask: Mask, block: PlacedBlock): LocalBlock {
+  const c = frame.toLocal(block.anchor);
+  const hw = block.widthM / 2;
+  const hh = block.heightM / 2;
+  const r = (block.rotationDeg * Math.PI) / 180;
+  const rad = Math.hypot(hw, hh);
+  return {
+    mask,
+    cx: c.x,
+    cy: c.y,
+    hw,
+    hh,
+    cs: Math.cos(r),
+    sn: Math.sin(r),
+    minX: c.x - rad,
+    maxX: c.x + rad,
+    minY: c.y - rad,
+    maxY: c.y + rad,
+  };
+}
+
+/** Each point's segment and its coordinates inside it: the reading order of a curved message. */
+function assignSegments(blocks: LocalBlock[], xs: Float64Array, ys: Float64Array, n: number): { of: Int32Array; lx: Float64Array; ly: Float64Array } {
+  const of = new Int32Array(n);
+  const lx = new Float64Array(n);
+  const ly = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let best = 0;
+    let bestD = Infinity;
+    for (let k = 0; k < blocks.length; k++) {
+      const b = blocks[k]!;
+      const dx = xs[i]! - b.cx;
+      const dy = ys[i]! - b.cy;
+      const u = dx * b.cs + dy * b.sn;
+      const v = dy * b.cs - dx * b.sn;
+      // Distance outside the segment's rectangle: 0 inside it, so the point belongs to it.
+      const ox = Math.max(0, Math.abs(u) - b.hw);
+      const oy = Math.max(0, Math.abs(v) - b.hh);
+      const d = ox * ox + oy * oy;
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+        lx[i] = u;
+        ly[i] = v;
+      }
+    }
+    of[i] = best;
+  }
+  return { of, lx, ly };
+}
+
 function buildField(
   input: FormationInput,
   frame: LocalFrame,
@@ -439,13 +616,12 @@ function buildField(
   H: number,
   cell: number,
   rotationDeg: number,
+  ink: (x: number, y: number) => boolean,
   progress: (s: FormationStage, f: number) => void,
 ): Field {
   const fw = Math.max(1, Math.ceil(W / cell));
   const fh = Math.max(1, Math.ceil(H / cell));
   const data = new Uint8Array(fw * fh);
-  const threshold = input.coverageThreshold ?? 0.5;
-  const m = input.mask;
   const perimeter = input.perimeter ? polygonToLocal(frame, input.perimeter) : null;
   const area = input.formationArea ? polygonToLocal(frame, input.formationArea) : null;
   const exclusions = (input.exclusions ?? []).map((e) => {
@@ -462,11 +638,9 @@ function buildField(
   const s = Math.sin(rad);
   for (let j = 0; j < fh; j++) {
     const y = H / 2 - (j + 0.5) * cell;
-    const v = ((H / 2 - y) / H) * m.height;
     for (let i = 0; i < fw; i++) {
       const x = -W / 2 + (i + 0.5) * cell;
-      const u = ((x + W / 2) / W) * m.width;
-      if (sampleMask(m, u, v) < threshold) continue;
+      if (!ink(x, y)) continue;
       designCells++;
       world.x = x * c - y * s;
       world.y = x * s + y * c;
@@ -697,7 +871,7 @@ export function nearestNeighbourStats(xs: Float64Array, ys: Float64Array, n: num
  * Stroke width from a chamfer distance transform of the valid field: sampled on ridge cells
  * (local maxima along x or y ≈ medial axis). Width = 2 × distance to the nearest edge.
  */
-function strokeWidths(f: Field): { median: number; p20: number } {
+function strokeSamples(f: Field): number[] {
   const { fw, fh } = f;
   const INF = 1e9;
   const dt = new Float32Array(fw * fh);
@@ -738,6 +912,10 @@ function strokeWidths(f: Field): { median: number; p20: number } {
       }
     }
   }
+  return widths;
+}
+
+function strokeStats(widths: number[]): { median: number; p20: number } {
   if (widths.length === 0) return { median: 0, p20: 0 };
   widths.sort((x, y) => x - y);
   return { median: widths[widths.length >> 1]!, p20: widths[Math.floor(widths.length * 0.2)]! };
