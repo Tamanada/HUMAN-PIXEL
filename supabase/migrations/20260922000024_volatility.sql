@@ -12,14 +12,16 @@
 --   • hp_forbid() only raises an exception. It reads nothing and writes nothing, so STABLE is the
 --     truth — and that single line clears nine of the warnings, because every guarded read calls it.
 --
---   • get_event_live_stats and get_my_assignment genuinely read the wall clock: the first measures
---     its own latency for the health panel, the second returns the server_time the phones
---     synchronise on. clock_timestamp() must stay, so VOLATILE is the truth for them.
+--   • get_event_live_stats, get_my_assignment and admin_system_health genuinely read live state:
+--     the first measures its own latency for the health panel, the second returns the server_time
+--     the phones synchronise on, and the third reports database size and connection counts
+--     (pg_database_size, pg_stat_activity). That is what VOLATILE means, so it is the truth here.
 --
--- Both are only ever reached through supabase.rpc(), which POSTs, so PostgREST (which restricts
--- volatile routines to POST) serves them exactly as before.
+-- All of them are only ever reached through supabase.rpc(), which POSTs, so PostgREST (which
+-- restricts volatile routines to POST) serves them exactly as before.
 -- ---------------------------------------------------------------------------------------------
 
 alter function public.hp_forbid() stable;
 alter function public.get_event_live_stats(uuid) volatile;
 alter function public.get_my_assignment(uuid) volatile;
+alter function public.admin_system_health() volatile;
