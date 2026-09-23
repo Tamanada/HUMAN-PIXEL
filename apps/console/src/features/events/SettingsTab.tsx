@@ -36,6 +36,7 @@ export function SettingsTab({ event, canEdit }: TabProps) {
     release_local: isoToZonedLocal(event.positions_release_at, tz0),
   });
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+  const [newColor, setNewColor] = useState('#ffffff');
   const frozen = !canEdit;
 
   const save = useMutation({
@@ -140,15 +141,25 @@ export function SettingsTab({ event, canEdit }: TabProps) {
                   style={{ background: c }}
                 />
               ))}
-              <label className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-line px-2 text-xs text-muted hover:text-text">
+              {/* The picker fires while the cursor moves: choose first, add on click (one swatch, not fifty). */}
+              <span className="flex h-7 items-center gap-1.5 rounded-full border border-line px-2 text-xs text-muted">
                 <input
                   type="color"
                   disabled={frozen}
+                  value={newColor}
+                  onChange={(e) => setNewColor(e.target.value)}
                   className="h-4 w-4 cursor-pointer border-0 bg-transparent p-0"
-                  onChange={(e) => set('briefing', { ...d.briefing, dressCode: { ...d.briefing.dressCode, colors: [...(d.briefing.dressCode?.colors ?? []), e.target.value] } })}
+                  aria-label="Pick a colour"
                 />
-                Add colour
-              </label>
+                <button
+                  type="button"
+                  disabled={frozen}
+                  className="hover:text-text"
+                  onClick={() => set('briefing', { ...d.briefing, dressCode: { ...d.briefing.dressCode, colors: [...(d.briefing.dressCode?.colors ?? []), newColor] } })}
+                >
+                  Add this colour
+                </button>
+              </span>
             </div>
           </Field>
           <Field label="What to bring"><Input disabled={frozen} maxLength={200} placeholder="e.g. Water, sunscreen, your phone charged" value={d.briefing.bring ?? ''} onChange={(e) => set('briefing', { ...d.briefing, bring: e.target.value })} /></Field>
