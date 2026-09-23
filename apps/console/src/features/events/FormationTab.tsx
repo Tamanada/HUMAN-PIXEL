@@ -365,8 +365,7 @@ export function FormationTab({ event, canEdit }: TabProps) {
             onBearingChange={setViewBearing}
           />
           {result && <ResultPanel result={result} />}
-          {result && sizing === 'fit' && mode === 'text' && text.includes('
-') && result.metrics.footprintWidthM < 0.5 * Math.max(result.metrics.footprintWidthM, 3 * result.metrics.footprintHeightM) && (
+          {result && sizing === 'fit' && mode === 'text' && text.includes(String.fromCharCode(10)) && result.metrics.footprintHeightM * 3 > result.metrics.footprintWidthM && (
             <Alert>Your area is long and narrow: a message on a single line would fill much more of it (more people, thicker letters).</Alert>
           )}
           {result && editable && (
